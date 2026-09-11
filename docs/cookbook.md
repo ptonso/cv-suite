@@ -2,6 +2,36 @@
 
 Copy-paste recipes for the common workflows. Every command follows `cvsuite <branch> <src> [transform] <output>`; see [Getting started](getting-started.md) for the shape and [`specs/`](../specs/) for every flag.
 
+## Clean up raw image folders (`prep`)
+
+```bash
+# unzip, flatten, dedupe, sequential rename
+cvsuite prep arrange ./dump \
+    --unzip \
+    --flatten plain \
+    --exact-dedup \
+    --rename-seq \
+    ./clean
+
+# normalize pixels: cap the long side, convert to JPEG
+cvsuite prep process ./clean \
+    --size 1024 \
+    --resize-mode cap-long \
+    --to-format jpg \
+    ./normalized
+
+# pool several folders and sample a flat set
+cvsuite prep sample ./a ./b ./c \
+    --count 300 \
+    --hardlink \
+    ./sampled
+```
+
+`arrange` -> `process` -> `sample` chains directly: `sample` skips the
+`_non_images/` folder and `manifest.yaml` that the earlier steps leave
+behind. Add `--dry-run` to any prep command to see the plan without
+touching the filesystem.
+
 ## Convert between annotation formats
 
 ```bash
@@ -38,10 +68,34 @@ For flat image folders use `cvsuite prep sample`; for class folders use `cvsuite
 ## Auto-label with a grounding model
 
 ```bash
-cvsuite label ./images ground --provider gsam --prompt "fire, smoke, person" to-coco ./grounded
+# inline: one literal prompt, used as a single class
+cvsuite label ./images ground \
+    --provider gsam \
+    --prompt "person in a safety vest" \
+    to-coco ./grounded
+
+# yaml: several classes, each with synonym phrases
+cvsuite label ./images ground \
+    --provider gsam \
+    --prompt prompts.yaml \
+    to-coco ./grounded
 ```
 
-- The prompt can be one string, or a YAML/JSON file that is either a list of phrases or a `label -> phrases` map.
+```yaml
+# prompts.yaml — label -> phrase(s); every phrase is forwarded to the model
+# and detections come back under the one label they're grouped under
+fire:
+  - fire
+  - flames
+smoke:
+  - smoke
+person:
+  - person
+  - human
+```
+
+- An inline `--prompt` is **one literal string** — commas are kept as-is, not split into classes.
+- A YAML file can also just be a flat list (`- fire`, `- smoke`, `- person`) when you don't need synonyms.
 - Filter weak boxes with `--threshold`, deduplicate with `--iou-threshold`.
 - Providers: `sam3`, `gsam`, `gdino`, `llmdet`, `locate_anything`, `rex_omni`, `yolo_e`. `sam3` requires a GPU.
 
@@ -56,11 +110,21 @@ OCR boxes are appended to existing annotations with `kind="ocr"` and the recogni
 ## Classify an image folder
 
 ```bash
-cvsuite class ./images infer --provider clip --prompt "good,bad" to-class-dir ./classified
+cvsuite class ./images infer \
+    --provider clip \
+    --prompt "good,bad" \
+    to-class-dir ./classified
 ```
 
-- `--prompt` is a comma-separated label list, a YAML/JSON list, or a `label -> prompt(s)` map.
-- With a list, `--template-prompt "a photo of a <class>"` wraps each label.
+`--prompt` here is always inline, never a file path. A comma list is wrapped with `--template-prompt`; for explicit phrases per class, pass a JSON map instead:
+
+```bash
+cvsuite class ./images infer \
+    --provider clip \
+    --prompt '{"good": ["a clean part", "no visible defects"], "bad": ["a damaged part", "scratched"]}' \
+    to-class-dir ./classified
+```
+
 - Route low-confidence images aside with `to-class-dir --threshold 0.6` (they land in an `unlabeled/` folder).
 - Add train/val/test folders on the way out: `to-class-dir --val-frac 0.1 --test-frac 0.1`.
 
@@ -79,6 +143,9 @@ cvsuite vlm ./images caption --provider qwen to-json ./captions
 
 # free-form question over every image
 cvsuite vlm ./images ask --prompt "What safety equipment is visible?" --provider qwen to-json ./answers
+
+# several questions per image, from a YAML file (a flat list, or label -> question(s))
+cvsuite vlm ./images ask --prompt questions.yaml --provider qwen to-json ./answers
 
 # answer questions already attached to a VQA dataset
 cvsuite vlm ./vqa.json vqa --provider qwen to-json ./predictions --skip-images
@@ -100,7 +167,7 @@ cvsuite vlm ./predictions to-vqa-style ./manifest
 # text to image
 cvsuite gen create --provider flux --prompt "a red fox in the snow" to-dst ./fox.png
 
-# many prompts, several images each, into a directory
+# many prompts, several images each, into a directory (prompts.yaml: a flat list, or id -> prompt)
 cvsuite gen create --provider flux --prompt prompts.yaml --num-images 4 to-dst ./out-dir
 
 # edit existing images (reuses label-style ingest for annotated sources)
@@ -108,27 +175,6 @@ cvsuite gen edit ./photos --prompt "make it night, keep the layout" to-dst ./edi
 ```
 
 Provider-specific knobs go through repeatable `--model-arg key=value`; `--width` / `--height` override any size passed that way.
-
-## Clean up raw image folders (`prep`)
-
-```bash
-# unzip, flatten, dedupe, sequential rename
-cvsuite prep arrange ./dump ./clean --unzip --flatten plain --exact-dedup --rename-seq
-
-# normalize pixels: cap the long side, convert to JPEG
-cvsuite prep process ./clean ./normalized --size 1024 --resize-mode cap-long --to-format jpg
-
-# fix rotation with a small orientation model (runs on CPU)
-cvsuite prep orient ./normalized ./oriented --batch 16
-
-# pool several folders and sample a flat set
-cvsuite prep sample ./a ./b ./c ./sampled --count 300 --hardlink
-```
-
-`arrange` -> `process` -> `sample` chains directly: `sample` skips the
-`_non_images/` folder and `manifest.yaml` that the earlier steps leave
-behind. Add `--dry-run` to any prep command to see the plan without
-touching the filesystem.
 
 ## Emit a stats sidecar
 
