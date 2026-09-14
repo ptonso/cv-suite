@@ -1,0 +1,18 @@
+{
+  "version": "1",
+  "task": "vlm_sample",
+  "sample_key": "fire",
+  "split": "train",
+  "qa_pairs": [
+    {
+      "question": "Describe this image in one concise sentence.",
+      "answer": "The image depicts a large, intense fire burning with bright flames and smoke rising from a pile of wood and debris.",
+      "model": "qwen",
+      "meta": {
+        "source": "caption"
+      }
+    }
+  ],
+  "rel_image_path": "fire.jpg",
+  "original_filename": "fire.jpg"
+}

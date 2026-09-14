@@ -1,0 +1,5 @@
+path: .
+format: coco
+task: det
+names: []
+train: train/_annotations.coco.json

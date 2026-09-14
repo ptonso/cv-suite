@@ -21,6 +21,8 @@ class QwenOptions:
     model_id: str | None = None
     max_new_tokens: int | None = None
     trust_remote_code: bool | None = None
+    min_pixels: int | None = None
+    max_pixels: int | None = None
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,8 @@ class QwenVLConfig:
     model_id: str = DEFAULT_MODEL_ID
     max_new_tokens: int = 64
     trust_remote_code: bool = False
+    min_pixels: int = 16 * 28 * 28
+    max_pixels: int = 2560 * 28 * 28
 
 
 QwenJob = VLMJob
@@ -80,6 +84,8 @@ class QwenModel(BaseVLMModel[QwenOptions, QwenRuntime]):
             )
         processor = AutoProcessor.from_pretrained(
             source.load_arg,
+            min_pixels=int(cfg.min_pixels),
+            max_pixels=int(cfg.max_pixels),
             **utils.build_hf_source_kwargs(
                 source,
                 trust_remote_code=cfg.trust_remote_code,
@@ -188,6 +194,8 @@ class QwenModel(BaseVLMModel[QwenOptions, QwenRuntime]):
             extra={
                 "max_new_tokens": runtime.cfg.max_new_tokens,
                 "hf_model_type": runtime.model_type,
+                "min_pixels": runtime.cfg.min_pixels,
+                "max_pixels": runtime.cfg.max_pixels,
             },
         )
 

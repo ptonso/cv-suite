@@ -1,0 +1,18 @@
+version: 1
+branch: prep
+command: arrange
+src: docs/example_data/dump
+dst: docs/example_data/clean
+options:
+  unzip: true
+  flatten: none
+  dedup_mode: exact
+  perceptual_threshold: null
+  rename_seq: true
+  dst_subdir: null
+  link_mode: copy
+  non_image: collect
+  dry_run: false
+  verbose: 0
+stats:
+  skipped_duplicates: 1

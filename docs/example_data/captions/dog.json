@@ -1,0 +1,18 @@
+{
+  "version": "1",
+  "task": "vlm_sample",
+  "sample_key": "dog",
+  "split": "train",
+  "qa_pairs": [
+    {
+      "question": "Describe this image in one concise sentence.",
+      "answer": "A fluffy white dog is sitting on green grass with its tongue out.",
+      "model": "qwen",
+      "meta": {
+        "source": "caption"
+      }
+    }
+  ],
+  "rel_image_path": "dog.jpg",
+  "original_filename": "dog.jpg"
+}

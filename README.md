@@ -10,12 +10,32 @@ Convert between annotation formats (YOLO, COCO, LabelMe, class folders, segmenta
 
 ```bash
 cvsuite label ./dataset-yolo to-coco ./dataset-coco
-cvsuite label ./images ground --provider gsam --prompt "fire, smoke" to-coco ./labeled
+cvsuite label ./images ground --provider gsam --prompt "fire" to-results ./labeled
 cvsuite vlm ./images caption --provider qwen to-json ./captions
 cvsuite class ./images infer --provider clip --prompt "good,bad" to-class-dir ./sorted
 cvsuite gen create --provider flux --prompt "a red fox in the snow" to-dst ./fox.png
 cvsuite prep arrange ./dump ./clean --unzip --exact-dedup --rename-seq
 ```
+
+### Examples
+
+To generate these examples locally, run [`./scripts/generate_examples.sh`](scripts/generate_examples.sh).
+
+**Image Generation (`cvsuite gen`)**
+
+```bash
+cvsuite gen create --provider stable_diffusion --precision fp16 --prompt "a red fox in the snow" to-dst ./fox.png
+```
+
+![A red fox in the snow](docs/example_data/fox.png)
+
+**Zero-Shot Grounding (`cvsuite label ground`)**
+
+```bash
+cvsuite label ./images ground --provider gsam --prompt "fire" to-results ./labeled
+```
+
+![Fire detection with grounding overlay](docs/example_data/labeled/annotated/fire.jpg)
 
 More in the [cookbook](https://github.com/ptonso/cv-suite/blob/main/docs/cookbook.md).
 

@@ -1,0 +1,12 @@
+{
+  "images": [
+    {
+      "id": 1,
+      "file_name": "dog.jpg",
+      "width": 1546,
+      "height": 1213
+    }
+  ],
+  "annotations": [],
+  "categories": []
+}
