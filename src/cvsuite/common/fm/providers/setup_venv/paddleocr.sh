@@ -19,7 +19,6 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 source "${VENV_DIR}/bin/activate"
 pip install -U pip wheel setuptools
-pip install "numpy<2"
 
 PY_TAG="$("${VENV_DIR}/bin/python" -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')"
 PLATFORM_TAG="$("${VENV_DIR}/bin/python" -c 'import platform, sys; print("linux_x86_64" if sys.platform.startswith("linux") and platform.machine().lower() in {"x86_64", "amd64"} else "")')"
@@ -54,4 +53,4 @@ else
 fi
 
 pip install "${PADDLE_OCR_SPEC}"
-pip install "numpy<2"
+pip install "numpy>=2,<2.4"

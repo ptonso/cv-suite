@@ -36,10 +36,10 @@ class PaddleOCRRuntime:
 
 
 def _is_point_sequence(value: object) -> bool:
-    if not isinstance(value, (list, tuple)) or len(value) < 2:
+    if not isinstance(value, (list, tuple, np.ndarray)) or len(value) < 2:
         return False
     first = value[0]
-    return isinstance(first, (list, tuple)) and len(first) >= 2
+    return isinstance(first, (list, tuple, np.ndarray)) and len(first) >= 2
 
 
 def _parse_text_payload(payload: object) -> Tuple[Optional[str], Optional[float]]:
@@ -95,11 +95,11 @@ def _iter_ocr_entries(payload: object) -> Iterator[Tuple[List[Tuple[float, float
 
 
 def _normalize_poly(poly: object) -> List[Tuple[float, float]]:
-    if not isinstance(poly, (list, tuple)):
+    if not isinstance(poly, (list, tuple, np.ndarray)):
         return []
     points: List[Tuple[float, float]] = []
     for point in poly:
-        if not isinstance(point, (list, tuple)) or len(point) < 2:
+        if not isinstance(point, (list, tuple, np.ndarray)) or len(point) < 2:
             return []
         try:
             x = float(point[0])
@@ -147,9 +147,16 @@ class PaddleOCRModel(BaseOCRModel[PaddleOCROptions, PaddleOCRRuntime]):
             use_gpu = False
 
         engine_kwargs = _load_engine_kwargs(ctx.config_path)
-        engine_kwargs.setdefault("use_angle_cls", True)
-        engine_kwargs.setdefault("show_log", False)
-        engine_kwargs["use_gpu"] = use_gpu
+        engine_kwargs.setdefault("use_textline_orientation", True)
+        # Document-scan preprocessing (deskew/unwarp a photographed page); off by
+        # default since cvsuite runs OCR over arbitrary photos, not paper scans,
+        # where it adds cost and can distort a flat sign/label instead of helping.
+        engine_kwargs.setdefault("use_doc_orientation_classify", False)
+        engine_kwargs.setdefault("use_doc_unwarping", False)
+        # Upstream default is 0.0 (keeps every low-confidence guess); drop obvious
+        # noise from tiny/illegible background text without touching real hits.
+        engine_kwargs.setdefault("text_rec_score_thresh", 0.5)
+        engine_kwargs["device"] = "gpu" if use_gpu else "cpu"
 
         engine = PaddleOCR(**engine_kwargs)
         return PaddleOCRRuntime(engine=engine, use_gpu=use_gpu)
@@ -176,7 +183,7 @@ class PaddleOCRModel(BaseOCRModel[PaddleOCROptions, PaddleOCRRuntime]):
                 with Image.open(job.image_path) as image:
                     width = float(rec.image.width or image.width)
                     height = float(rec.image.height or image.height)
-                raw_result = runtime.engine.ocr(str(job.image_path), cls=True)
+                raw_result = runtime.engine.predict(str(job.image_path))
             except Exception as exc:
                 warnings.append(f"[paddleocr] failed to run OCR src={rec.image.path} resolved={job.image_path}: {exc}")
                 continue

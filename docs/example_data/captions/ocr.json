@@ -1,0 +1,18 @@
+{
+  "version": "1",
+  "task": "vlm_sample",
+  "sample_key": "ocr",
+  "split": "train",
+  "qa_pairs": [
+    {
+      "question": "Describe this image in one concise sentence.",
+      "answer": "A red stop sign with white lettering is displayed against a clear blue sky.",
+      "model": "qwen",
+      "meta": {
+        "source": "caption"
+      }
+    }
+  ],
+  "rel_image_path": "ocr.jpg",
+  "original_filename": "ocr.jpg"
+}

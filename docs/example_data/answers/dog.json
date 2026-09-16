@@ -1,0 +1,18 @@
+{
+  "version": "1",
+  "task": "vlm_sample",
+  "sample_key": "dog",
+  "split": "train",
+  "qa_pairs": [
+    {
+      "question": "How many dogs are in this image?",
+      "answer": "There is one dog in the image.",
+      "model": "qwen",
+      "meta": {
+        "source": "ask"
+      }
+    }
+  ],
+  "rel_image_path": "dog.jpg",
+  "original_filename": "dog.jpg"
+}

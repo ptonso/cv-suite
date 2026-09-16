@@ -37,6 +37,30 @@ cvsuite label ./images ground --provider gsam --prompt "fire" to-results ./label
 
 ![Fire detection with grounding overlay](docs/example_data/labeled/annotated/fire.jpg)
 
+**OCR Text Detection (`cvsuite label ocr`)**
+
+```bash
+cvsuite label ./images/ocr.jpg ocr --provider paddleocr to-results ./ocr-out
+```
+
+![OCR text detection with recognized boxes](docs/example_data/ocr-out/annotated/ocr.jpg)
+
+Recognized text:
+
+![Recognized text](docs/example_data/ocr-out/answer.svg)
+
+**Visual Question Answering (`cvsuite vlm ask`)**
+
+```bash
+cvsuite vlm ./images/dog.jpg ask --prompt "How many dogs are in this image?" --provider qwen to-json ./answers
+```
+
+![Dog photo used for VQA](docs/example_data/images/dog.jpg)
+
+Generated answer (see [`docs/example_data/answers/dog.json`](docs/example_data/answers/dog.json)):
+
+![Generated answer](docs/example_data/answers/answer.svg)
+
 More in the [cookbook](https://github.com/ptonso/cv-suite/blob/main/docs/cookbook.md).
 
 You point a branch at a source, optionally run a transform, and materialize a destination layout. There is deliberately no universal "convert anything to anything" command.

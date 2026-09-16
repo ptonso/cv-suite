@@ -17,6 +17,9 @@ curl -sL "https://upload.wikimedia.org/wikipedia/commons/8/82/Campfire_flames.jp
 # Dog (using the reliable PyTorch hub dog image)
 curl -sL "https://raw.githubusercontent.com/pytorch/hub/master/images/dog.jpg" -o $DATA/images/dog.jpg
 
+# OCR sample (single clean word, straight-on, no clutter -> OCR nails it)
+curl -sL "https://upload.wikimedia.org/wikipedia/commons/d/de/Stop_sign_us.jpg" -o $DATA/images/ocr.jpg
+
 # Create a mock YOLO dataset for the conversion example
 mkdir -p $DATA/dataset-yolo/images/train $DATA/dataset-yolo/labels/train
 cp $DATA/images/dog.jpg $DATA/dataset-yolo/images/train/
@@ -62,5 +65,17 @@ cvsuite gen create --provider stable_diffusion --precision fp16 --prompt "a red 
 # 6. Prep
 echo -e "\n6. Folder preparation (flatten, dedup, rename)"
 cvsuite prep arrange ./$DATA/dump ./$DATA/clean --unzip --exact-dedup --rename-seq
+
+# 7. OCR
+echo -e "\n7. OCR text detection"
+cvsuite label ./$DATA/images/ocr.jpg ocr --provider paddleocr to-results ./$DATA/ocr-out
+
+# 8. VLM Question Answering
+echo -e "\n8. VLM question answering"
+cvsuite vlm ./$DATA/images/dog.jpg ask --prompt "How many dogs are in this image?" --provider qwen --precision bf16 --model-arg max_pixels=2007040 to-json ./$DATA/answers
+
+# 9. Render the OCR/VQA answers captured above into README.md
+echo -e "\n9. Rendering example answers into README.md"
+python3 scripts/render_example_answers.py
 
 echo -e "\nDone! All examples generated in ./$DATA/"

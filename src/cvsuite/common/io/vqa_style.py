@@ -320,10 +320,13 @@ def _ingest_raw_vqa(src: Path) -> VisionDataset:
 class VQAStyleAdapter:
     @classmethod
     def matches(cls, src: Path) -> bool:
-        manifests = _discover_normalized_manifests(src)
-        if manifests:
-            return True
-        question_docs, _annotation_docs, _prediction_docs = _discover_raw_vqa_jsons(src)
+        try:
+            manifests = _discover_normalized_manifests(src)
+            if manifests:
+                return True
+            question_docs, _annotation_docs, _prediction_docs = _discover_raw_vqa_jsons(src)
+        except (ValueError, FileNotFoundError):
+            return False
         return bool(question_docs)
 
     @classmethod
