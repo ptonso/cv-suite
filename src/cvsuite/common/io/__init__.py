@@ -1,7 +1,7 @@
 """Built-in dataset I/O for cvsuite.
 
 Each module in this package implements one public format id and the read/write
-behaviour documented in `specs/common/io/*.md`. The router in `router.py` dispatches
+behaviour documented in `specs/common/io.md`. The router in `router.py` dispatches
 a filesystem source into canonical `VisionDataset` / `VisionRecord` objects.
 
 Built-in formats: `semseg_mask`, `yolo`, `labelme`, `coco`, `class-dir`, `flat`,

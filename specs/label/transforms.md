@@ -1,152 +1,67 @@
 # Label Transforms
 
-## 1. General Description
-The label transform layer mixes deterministic geometry/file transforms with FM-backed enrichment. The branch currently exposes sampling, grounding, OCR, grouped ops, and filtering commands publicly. These transforms run over normalized label datasets produced by `[[label/adapters]]` and preserve or extend annotations before output writers run.
+Related: **Read first** [label cli](cli.md). **See also** [label filter](filter.md), [label adapters](adapters.md), [label output](output.md), [fm_runtime](../common/fm_runtime.md).
 
-## 2. Inputs and Outputs (I/O)
-Public transform families:
-- `sample`
-- `ground`
-- `ocr`
-- `ops`
-- `filter`
+## Overview
 
-Concrete public command shapes:
-- `sample`
-  - `--count` or `--frac`
-  - `--hardlink`
-  - `--seed`
-- `ground`
-  - `--provider {sam3,gsam,gdino,llmdet,locate_anything,rex_omni,yolo_e}`
-  - `--model-id` (`llmdet` and `locate_anything` only)
-  - `--prompt` (mutually exclusive with `--reference-folder`)
-  - `--reference-folder` (`yolo_e` only; ingested via adapters into a one-image reference dataset)
-  - `--device`
-  - `--batch`
-  - `--precision`
-  - `--config`
-  - `--no-resume`
-  - `--threshold`
-  - `--iou-threshold`
-- `ocr`
-  - `--provider/--model`
-  - `--device`
-  - `--batch`
-  - `--precision`
-  - `--config`
-  - `--no-resume`
-- `ops`
-  - public surface is project-level, but routes to internal subcommands such as `rebox`, `make-negatives`, `crop-dets`, and `inverse-crop-dets`
-- `filter`
-  - public surface routes to `train-logistic` and `apply`
+Label transforms change an annotated dataset before an output writes it. Some are deterministic (sampling, geometry operations, filtering), and some use foundation models to add annotations (grounding, OCR). Filtering is large enough for its own spec: [label filter](filter.md).
 
-Outputs:
-- mutated dataset
-- temporary auxiliary directories for some ops transforms
-- FM metadata for grounding and OCR runs
+## Language
 
-## 3. Interfaces
-`sample` interface:
-- global sampling over records, preserving annotations and existing splits
-- writes `dataset.meta["sample"]`
+- **Grounding**: finding boxes or masks in an image that match text prompts (or a reference image).
+- **Group id**: links a box and its polygon so they are scored and suppressed together.
+- **Prompt label**: the label a prompt is remapped to on output.
 
-`ground` interface:
-- runs in one of two mutually exclusive modes: text-prompt or reference-image
-- text-prompt mode accepts either one raw string prompt or a YAML/JSON prompt spec
-  - raw strings are treated as one prompt item and are not split on punctuation
-  - YAML/JSON may be a flat list of prompts or a label-to-prompts mapping
-  - every prompt is forwarded separately per image and emitted back as the exact label/prompt string
-- reference-image mode (`yolo_e` only) ingests `--reference-folder` via `[[label/adapters]]` into a
-  reference dataset whose labels are generalized onto the target dataset; the reference's class
-  names are emitted as the output labels
-- calls shared FM runtime with task family `ground`
-- post-filters new annotations only
+## Map
 
-`ocr` interface:
-- calls shared FM runtime with task family `ocr`
-- appends OCR boxes to records
+- `label/transform/sample/`, `ground/`, `ocr/`, `ops/`, `filter/`, each with `commands/`.
+- `label/core/crops.py`, `annotate/`: crop and annotation helpers.
 
-`ops` interfaces:
-- `rebox`
-  - recompute one detection box from visible keypoints
-- `make-negatives`
-  - generate random square negative crops under a temp root
-- `crop-dets`
-  - crop detections or polygons into a new temp dataset
-- `inverse-crop-dets`
-  - takes a `modified_crops` dataset (a LabelMe crop dataset produced from `crop-dets` output) and pastes its annotations back onto the original source images, reversing `crop-dets`
+## Contracts
 
-## 4. Business Decisions and Strict Policies
-Sampling:
-- global sample only; no class-balancing logic here
-- preserves annotation payloads instead of creating image-only outputs
-- `--count` must be non-negative and cannot exceed total record count
-- `--frac` must be between 0 and 1, and a positive fraction guarantees at least one sample when the dataset is non-empty
-- this is the correct sampler for YOLO, COCO, and LabelMe inputs
+### sample
 
-Grounding:
-- duplicate prompts assigned to different labels are fatal
-- exactly one of `--prompt` or `--reference-folder` must be supplied; both-set and neither-set are fatal
-- `--reference-folder` is only valid for `yolo_e`; other providers reject it
-- `--model-id` is only valid for `llmdet` and `locate_anything`; unsupported checkpoint ids are fatal
-- `yolo_e` accepts text prompts XOR a reference image, never both, and re-validates this in the provider
-- `yolo_e` reference mode requires the reference folder to resolve to exactly one annotated image; more than one is fatal
-- `sam3` rejects CPU execution
-- `rex_omni` box scores are coordinate-token likelihoods (`exp(mean log p)` over the generated
-  coordinate tokens), so `--threshold` filters them; degenerate outputs that cannot be aligned to
-  the generated tokens fall back to score 1.0 with a warning
-- post-filtering compares before/after record annotation counts so only newly added annotations are eligible for thresholding or NMS
-- score thresholding is group-based through `group_id`, so linked box/polygon outputs rise or fall together
-- IoU suppression is also group-based and happens per output label after prompt-to-label remapping
-- overlapping groups from distinct labels are preserved
-- prompt labels extend the dataset class list as needed
-- temporary grounding prompt attributes are removed in `finally`
+`--count` or `--frac`, `--hardlink`, `--seed`. Global sampling over records that keeps annotations and existing splits. Writes `dataset.meta["sample"]`.
 
-OCR:
-- provider input is normalized so `paddleOCR` aliases to `paddleocr`
-- OCR boxes are appended without removing existing annotations
-- OCR detections use `BBox.kind == "ocr"` and recognized text is stored in `BBox.text`
+### ground
 
-Ops:
-- `rebox`
-  - `expand` and `adaptive` are currently implemented identically
-  - `edge_tol` is currently unused
-  - replaces record boxes with a single box using the first keypoint class
-- `make-negatives`
-  - `min-gap` and `iou-thresh` are declared but currently reserved and unenforced
-  - writes new image files under a temp negatives root
-  - appends empty-annotation records with `negative=True`
-- `crop-dets`
-  - mutually exclusive `imgsz` vs `long_size`
-  - supports padding modes `background`, `black`, `gray`, `white`
-  - keeps only the triggering object in each crop
-  - preserves a matching segmentation polygon when one can be associated with that object
-  - rewrites crop-local box/polygon geometry for the final crop canvas
-  - assigns classification label from the source label on output records
+Arguments: `--provider {sam3,gsam,gdino,llmdet,locate_anything,rex_omni,yolo_e}`; `--model-id` (`llmdet`, `locate_anything` only); `--prompt` (exclusive with `--reference-folder`); `--reference-folder` (`yolo_e` only, ingested via [adapters](adapters.md) into a one-image reference dataset); `--device`, `--batch`, `--precision`, `--config`, `--no-resume`, `--threshold`, `--iou-threshold`.
 
-## 5. Implementation Details
-Grounding implementation path:
-1. Parse prompt spec into flat prompts plus prompt-to-label mapping.
-2. Attach temporary per-record prompt attributes.
-3. Call FM runtime/provider.
-4. Compare old vs new annotation sets.
-5. Filter low-score or overlapping new groups.
-6. Remap prompt labels, update class IDs, normalize dataset task.
+Two exclusive modes:
 
-OCR implementation path:
-- build `FMRequest(task="ocr", provider="paddleocr", ...)`
-- provider appends OCR boxes with `kind="ocr"` and `text`
+- Text-prompt: one raw string (one prompt item, never split on punctuation) or a YAML/JSON spec (a flat list, or a label-to-prompts mapping). Each prompt is sent per image and emitted back as the exact label or prompt string.
+- Reference-image (`yolo_e` only): the reference dataset's class names become the output labels.
 
-Ops temp datasets:
-- `make-negatives` temp root prefix: `vislabel_neg_*`
-- `crop-dets` temp root prefix: `vislabel_crop_*`
-- `inverse-crop-dets` temp root prefix: `vislabel_inverse_crop_*`
-- `crop-dets` outputs can be sent to normal writers such as `to-yolo`, `to-labelme`, or `to-coco`
-- `inverse-crop-dets` ingests its `modified_crops` argument through the LabelMe adapter and re-projects crop annotations onto the source images using the `crop_id` recorded by `crop-dets`
+Runs the runtime with task family `ground`; only newly added annotations are post-filtered.
 
-Related docs:
-- `[[label/cli]]`
-- `[[label/adapters]]`
-- `[[label/output]]`
-- `[[label/filter]]`
-- `[[common/fm_runtime]]`
+Flow: parse the prompt spec into flat prompts plus a prompt-to-label mapping; attach the temporary record attribute `ground_prompts`; call the runtime; compare old and new annotation sets; filter low-score or overlapping new groups; remap prompt labels, update class ids, normalize the dataset task.
+
+### ocr
+
+`--provider/--model`, `--device`, `--batch`, `--precision`, `--config`, `--no-resume`. Builds `FMRequest(task="ocr", provider="paddleocr", ...)` and appends OCR boxes with `BBox.kind == "ocr"` and the text in `BBox.text`. Existing annotations stay.
+
+### ops
+
+Project-level surface routing to `rebox`, `make-negatives`, `crop-dets` and `inverse-crop-dets`.
+
+- `rebox`: recompute one detection box from visible keypoints, replacing record boxes with a single box using the first keypoint class. `expand` and `adaptive` modes behave identically, and `edge_tol` is unused.
+- `make-negatives`: random square negative crops under a temporary root (`vislabel_neg_*`), appended as empty-annotation records with `negative=True`. `min-gap` and `iou-thresh` are declared but not enforced.
+- `crop-dets`: crops detections or polygons into a new temporary dataset (`vislabel_crop_*`). `imgsz` and `long_size` are exclusive; padding modes `background`, `black`, `gray`, `white`. Each crop keeps only its triggering object, with a matching polygon when one is associated; geometry is rewritten to the crop canvas; the classification label comes from the source label. Output can go to normal writers.
+- `inverse-crop-dets`: takes a `modified_crops` dataset (a LabelMe crop dataset produced from `crop-dets`), ingests it through the LabelMe adapter, and pastes its annotations back onto the original images using the recorded `crop_id` (temporary root `vislabel_inverse_crop_*`).
+
+### filter
+
+Routes to `train-logistic` and `apply`; see [label filter](filter.md).
+
+## Constraints
+
+- `sample` MUST be a global sampler with no class balancing, MUST keep annotation payloads, and is the right sampler for YOLO, COCO and LabelMe inputs. `--count` MUST be non-negative and at most the record count; `--frac` MUST be in `[0, 1]`, and a positive fraction MUST yield at least one sample for a non-empty dataset.
+- `sample --hardlink` MUST only be paired with outputs that expose `hardlink` ([pipeline](../pipeline.md#hardlink-hint)).
+- Duplicate prompts assigned to different labels MUST be fatal.
+- Exactly one of `--prompt` and `--reference-folder` MUST be given; both or neither MUST be fatal.
+- `--reference-folder` MUST be accepted only for `yolo_e`, and MUST resolve to exactly one annotated image. `--model-id` MUST be accepted only for `llmdet` and `locate_anything`, and an unsupported checkpoint id MUST be fatal. `yolo_e` MUST re-validate text-XOR-reference in the provider.
+- `sam3` MUST reject CPU execution.
+- `rex_omni` box scores are coordinate-token likelihoods (`exp(mean log p)` over generated coordinate tokens), so `--threshold` filters them. Degenerate outputs that cannot be aligned to tokens fall back to score `1.0` with a warning.
+- Post-filtering MUST compare annotation counts before and after so only new annotations are thresholded or suppressed. Score thresholding and IoU suppression MUST be group-based through `group_id`, and IoU suppression MUST run per output label after prompt-to-label remapping. Overlapping groups of different labels MUST be kept.
+- Prompt labels MUST extend the dataset class list as needed. Temporary `ground_prompts` attributes MUST be removed in `finally`.
+- OCR provider input MUST normalize `paddleOCR` to `paddleocr`.

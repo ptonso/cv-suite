@@ -1,62 +1,39 @@
 # Gen Output
 
-## 1. General Description
-The generation branch currently has one output writer, `to-dst`, which moves provider-generated images into their final destination layout. It is responsible for file-vs-directory interpretation, overwrite rules, naming rules, original-source export in edit mode, and optional stats emission.
+Related: **Read first** [gen cli](cli.md). **See also** [gen transforms](transforms.md), [stats](../common/stats.md).
 
-## 2. Inputs and Outputs (I/O)
-Command:
-- `cvsuite gen ... to-dst <dst> [options]`
+## Overview
 
-Arguments:
-- `dst`
-- `--overwrite`
-- `--no-original`
-- `--with-stats`
+`to-dst` is the only generation output. It moves provider-generated images into their final destination, decides whether the destination is a file or a directory, applies overwrite and naming rules, exports the original source images in edit mode, and optionally writes `stats.yaml`.
 
-Outputs:
-- one image file for single-record outputs when the destination is a file path
-- a directory of images for multi-record outputs or directory-like destinations
-- optional original-source exports for edit mode
-- optional `stats.yaml`
+## Language
 
-## 3. Interfaces
-Writer interface:
-- consumes generated image paths produced by providers
-- renames or moves those image files into final destinations
-- reads generation provenance attributes such as `gen_output_key`, `gen_source_image`, and `gen_source_key`
+- **Output key** (`gen_output_key`): stable key that names a generated image.
+- **Source key** (`gen_source_key`): identity of an edit source image, used to deduplicate original exports.
+
+## Map
+
+- `gen/output/commands/to_dst.py`.
+
+## Contracts
+
+`cvsuite gen ... to-dst <dst> [options]`. Arguments: `dst`, `--overwrite`, `--no-original`, `--with-stats`.
 
 Destination interpretation:
-- single-record dataset:
-  - existing directory or suffix-less destination => timestamped PNG file inside that directory
-  - explicit file path with suffix => that exact path
-- multi-record dataset:
-  - destination with suffix => suffix is stripped and the result is treated as a directory
-  - filenames default to `<gen_output_key>.png`
 
-## 4. Business Decisions and Strict Policies
-- Existing files are only replaced when `--overwrite` is present.
-- Edit mode exports original source images by default.
-- Original-source exports are deduplicated by `gen_source_key`; repeated references to the same original image do not create duplicate copies.
-- Original source export uses hardlinking where possible and falls back to copying semantics defined in the implementation.
-- Output filenames are generated from stable prompt/sample keys rather than from prompt text.
+| dataset | destination | result |
+|---|---|---|
+| single record | existing directory, or path without suffix | timestamped PNG inside that directory |
+| single record | path with a suffix | exactly that file |
+| multiple records | path with a suffix | suffix stripped, treated as a directory |
+| multiple records | directory | files named `<gen_output_key>.png` |
 
-## 5. Implementation Details
-Implementation steps:
-1. Determine whether destination is file-like or directory-like.
-2. Move generated images out of the provider output area.
-3. Name outputs using `gen_output_key` unless a single explicit file path was requested.
-4. In edit mode, export original images unless `--no-original` is set.
-5. Emit stats through `[[common/stats]]` when requested.
+Reads generation provenance attributes `gen_output_key`, `gen_source_image`, `gen_source_key`. Moves generated images out of the provider output area.
 
-Stats content currently includes:
-- generation mode
-- prompt count
-- fanout mode
-- image size
-- source summary when source metadata is available
-- primary artifact path list
+Stats (`build_gen_stats`): generation mode, prompt count, fanout mode, image size, source summary when available, primary artifact paths.
 
-Related docs:
-- `[[gen/cli]]`
-- `[[gen/transforms]]`
-- `[[common/stats]]`
+## Constraints
+
+- Existing files MUST be replaced only with `--overwrite`.
+- Edit mode MUST export original source images unless `--no-original` is set. Exports MUST be deduplicated by `gen_source_key`, and use hardlinks where possible.
+- Output filenames MUST come from stable prompt or sample keys, never from prompt text.

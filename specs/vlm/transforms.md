@@ -1,112 +1,68 @@
 # VLM Transforms
 
-## 1. General Description
-The VLM branch exposes four transforms with distinct purposes:
-- `caption`: seed an image-only dataset with a default caption question
-- `ask`: seed one or more unanswered questions from a prompt spec
-- `vqa`: run a VLM over already-seeded unanswered questions
-- `map-answers`: partition answered QA records into canonical answer buckets for downstream export
+Related: **Read first** [vlm cli](cli.md). **See also** [vlm adapters](adapters.md), [vlm output](output.md), [fm_provider](../common/fm_provider.md), [fm_runtime](../common/fm_runtime.md).
 
-These transforms are responsible for question seeding, provider runtime invocation, and answer normalization.
+## Overview
 
-## 2. Inputs and Outputs (I/O)
-`caption`:
-- provider/runtime args
-- no explicit prompt argument; uses the built-in caption prompt
+Four transforms, each with one job:
 
-`ask`:
-- `--prompt` required
-- provider/runtime args
+- `caption` seeds an image-only dataset with a default caption question.
+- `ask` seeds one or more unanswered questions from a prompt spec.
+- `vqa` runs a model over the pending unanswered questions.
+- `map-answers` sorts answered questions into fixed answer buckets for export.
 
-`vqa`:
-- provider/runtime args
+Example: `cvsuite vlm ./photos ask --prompt "Is there a dog?" to-json ./out`, then `vqa` fills answers, then `map-answers yes no` partitions them.
 
-`map-answers`:
-- positional canonical labels
-- optional `--labels-file`
+## Language
 
-Shared runtime args for FM-backed transforms:
-- `--provider/--model`
-- `--model-id`
-- `--device`
-- `--batch`
-- `--max-gpu-memory`
-- `--precision`
-- `--config`
-- `--weights`
-- `--no-resume`
-- repeatable `--model-arg key=value`
+- **Pending VQA**: a question with neither answer nor model (`has_pending_vqas()`).
+- **Answer bucket**: a canonical label an answer maps to; `unclear` is always present and last.
+- **Label registry**: the labels and their synonyms.
 
-Outputs:
-- updated `record.vqas`
-- dataset answer partitions for `map-answers`
-- FM metadata under `dataset.meta["fm"]`
+## Map
 
-## 3. Interfaces
-Question-seeding interfaces:
-- `caption` seeds the constant prompt `Describe this image in one concise sentence.`
-- `ask` loads prompt specs from:
-  - raw string
-  - existing YAML/JSON file path
-  - JSON string
-  - list
-  - label-to-questions mapping
-- `vqa` only runs inference against pending unanswered QA items
+- `vlm/transform/commands/`: `caption.py`, `ask.py`, `vqa.py`, `map_answers.py`.
+- `vlm/transform/core/`: question seeding and answer mapping.
 
-Answer-mapping interfaces:
-- `load_label_registry(labels, labels_file=...)`
-- `match_answer_text(answer, registry)`
-- `apply_answer_mapping(dataset, registry)`
+## Contracts
 
-Record attribute and metadata interfaces:
-- `vlm_sample_key`
-- `vlm_image_id`
-- `vlm_predominant_label`
-- `vlm_answer_bucket`
-- dataset meta `vlm_answer_buckets`
+### Arguments
 
-## 4. Business Decisions and Strict Policies
-- `caption` requires an image-only dataset with no existing questions.
-- `ask` appends only missing unanswered questions rather than duplicating existing QA pairs.
-- `has_pending_vqas()` is true only when a question lacks both answer and model.
-- `--max-gpu-memory` requires `--device auto`; other device modes reject it.
-- Provider aliases and model namespaces are normalized:
-  - `minicpm-v` -> `minicpm_v`
-  - bare `Qwen2.5-VL-*` and `Qwen3-VL-*` ids are rewritten to `Qwen/...`
-- Answer mapping always includes fallback label `unclear` and forces it to the end of the registry.
-- Label registry rules:
-  - labels may come from CLI and/or labels-file
-  - labels-file may be a list or a label-to-synonyms mapping
-  - labels must be safe relative path segments
-  - normalized synonym collisions are fatal
+- `caption`: runtime args; uses the built-in prompt `Describe this image in one concise sentence.`
+- `ask`: `--prompt` (required), runtime args.
+- `vqa`: runtime args.
+- `map-answers`: positional canonical labels, optional `--labels-file`.
+- Runtime args for model-backed transforms: `--provider/--model`, `--model-id`, `--device`, `--batch`, `--max-gpu-memory`, `--precision`, `--config`, `--weights`, `--no-resume`, repeatable `--model-arg key=value`.
 
-Answer-matching order is strict:
+### Outputs
+
+Updated `record.vqas`; answer partitions for `map-answers`; model metadata under `dataset.meta["fm"]`. Attributes and metadata: `vlm_sample_key`, `vlm_image_id`, `vlm_predominant_label`, `vlm_answer_bucket`, dataset meta `vlm_answer_buckets`.
+
+### Model runs
+
+Builds `FMRequest(task="vlm", provider=<normalized provider>, prompt=<prompt payload>)`. The provider updates existing QA entries or appends new ones. Metadata includes managed auto-placement information when relevant.
+
+### Answer mapping
+
+Interfaces: `load_label_registry(labels, labels_file=...)`, `match_answer_text(answer, registry)`, `apply_answer_mapping(dataset, registry)`.
+
+Matching order:
+
 1. full answer
-2. first/last non-empty line
-3. lead-in spans after phrases like `answer:` or `final answer:`
-4. trimmed spans after stripping rationale tails such as `because` and `since`
-5. symbolic token matching such as `A`, `(B)`, `option C`
+2. first or last non-empty line
+3. lead-in spans after phrases such as `answer:` or `final answer:`
+4. spans trimmed of rationale tails such as `because` and `since`
+5. symbolic tokens such as `A`, `(B)`, `option C`
 6. fallback to `unclear`
 
-Ambiguity handling:
-- hedged or multi-label answers such as `yes/no` or `A or B` map to `unclear`
-- ambiguous matches are marked with rule suffixes such as `:ambiguous`
+Hedged or multi-label answers such as `yes/no` or `A or B` map to `unclear`. Ambiguous matches carry rule suffixes such as `:ambiguous`.
 
-## 5. Implementation Details
-FM-backed VLM execution:
-- transform runtime builds `FMRequest(task="vlm", provider=<normalized provider>, prompt=<prompt payload>)`
-- provider-side bases update existing QA entries or append new ones
-- VLM FM metadata includes managed auto-placement information when relevant
+Dataset rewrite: each record expands into one record per QA pair, sample keys get question-specific suffixes, the mapped label, matching rule and alias go into QA metadata, and `vlm_answer_bucket` is written on each record. Outputs that support partitioning write one subtree per bucket; the `flat_vlm_json` reader resolves each sidecar's image inside its own bucket directory, so a partitioned tree re-ingests.
 
-`map-answers` dataset rewrite:
-- expands each record into one record per QA pair
-- rewrites sample keys with question-specific suffixes
-- stores mapped label, matching rule, and alias in QA metadata
-- writes `vlm_answer_bucket` on each output record
-- output commands that support partitioning materialize one destination subtree per answer bucket; the `flat_vlm_json` reader resolves each sidecar's image within its own bucket dir, so the partitioned tree re-ingests cleanly
+## Constraints
 
-Related docs:
-- `[[vlm/cli]]`
-- `[[vlm/output]]`
-- `[[common/fm_provider]]`
-- `[[common/fm_runtime]]`
+- `caption` MUST require an image-only dataset with no existing questions.
+- `ask` MUST append only missing unanswered questions and MUST NOT duplicate existing QA pairs.
+- `--max-gpu-memory` MUST require `--device auto`; other device modes MUST reject it.
+- Provider aliases and namespaces MUST be normalized: `minicpm-v` to `minicpm_v`; bare `Qwen2.5-VL-*` and `Qwen3-VL-*` ids to `Qwen/...`.
+- The label registry MUST always include `unclear` and force it to the end. Labels come from the CLI and/or the labels file (a list or a label-to-synonyms mapping). Labels MUST be safe relative path segments. Normalized synonym collisions MUST be fatal.

@@ -112,7 +112,7 @@ The base install ships the CLI and the I/O layer. Foundation-model backends run 
 ## Documentation
 
 - [`docs/`](https://github.com/ptonso/cv-suite/tree/main/docs) contains the guides: the [mental model](https://github.com/ptonso/cv-suite/blob/main/docs/index.md), [getting started](https://github.com/ptonso/cv-suite/blob/main/docs/getting-started.md), and a [cookbook](https://github.com/ptonso/cv-suite/blob/main/docs/cookbook.md) of common workflows.
-- [`specs/`](https://github.com/ptonso/cv-suite/tree/main/specs) is the technical source of truth: architecture, the dataset contract, per-branch behavior, business decisions, and the guardrails that must not break.
+- [`specs/`](https://github.com/ptonso/cv-suite/tree/main/specs) is the technical source of truth: architecture, the dataset contract, per-branch behavior, and the constraints that must not break.
 
 ## Names
 

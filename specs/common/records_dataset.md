@@ -1,93 +1,97 @@
 # Shared Dataset Contract
 
-## 1. General Description
-The project’s shared in-memory dataset contract is owned by `cvsuite.common.core`. The central types are `VisionDataset`, `VisionRecord`, and `ImageInfo`. `Record` (= `VisionRecord`) and `ImageRecord` (= `ImageInfo`) are aliases, not a separate data model. There is no `RecordsDataset` alias; the dataset type is `VisionDataset` directly.
+Related: **Read first** [architecture](../architecture.md). **See also** [io](io.md), [fm_runtime](fm_runtime.md), [fm_provider](fm_provider.md).
 
-The purpose of this contract is not to define a new user-facing storage format. The purpose is to let every branch ingest source layouts into a common image-centric record list, run deterministic transforms or FM-backed enrichments there, and then export to a destination layout without forcing branches to share filesystem conventions.
+## Overview
 
-The portable schema and the cvsuite runtime overlay now live together in `cvsuite.common.core` (`types.py` for value types and runtime dataclasses, `records.py` for the containers). Format reading and writing lives in `[[common/io]]`.
+The shared dataset is the one in-memory model of images and their annotations. It lives in `cvsuite.common.core`. Every branch except `prep` reads its source into it, transformations and models work on it, and outputs write from it.
 
-## 2. Inputs and Outputs (I/O)
-Inputs normalized into the shared contract today include:
-- raw images
-- class-organized images
-- annotated YOLO, LabelMe, and COCO datasets
-- VLM flat JSON pairs
-- VLM shard archives
-- VLM VQA manifests and raw VQA corpora
-- intermediate generation prompt expansions
-- temporary orientation-classification batches
+It is not a user-facing storage format. Its purpose is to let branches share transformations and models without sharing folder conventions. It is deliberately richer than any single export format: geometry is normalized, classification and question-answer payloads can sit on the same record, and data needed to round-trip a source format is carried beside the normalized annotations.
 
-Outputs derived from the shared contract today include:
-- class folders
-- YOLO, LabelMe, COCO, audit, preview, and results exports
-- VLM JSON, shard, and VQA-style exports
-- generated image outputs
-- FM subprocess payloads serialized to `in.json` and `out.json`
+The main types are `VisionDataset` (a list of records plus dataset-wide information), `VisionRecord` (one image-centric sample) and `ImageInfo` (an image's path and size). `Record` and `ImageRecord` are aliases for `VisionRecord` and `ImageInfo`, not a second model.
 
-## 3. Interfaces
-Contract (`cvsuite.common.core`):
-- `VisionDataset`, `VisionRecord`, `ImageInfo`
-- `Record = VisionRecord`, `ImageRecord = ImageInfo`
-- `VisionDataset` methods: `to_json(...)`, `from_json(...)`, `by_split(...)`, `resized(...)`
-- free functions: `normalize_dataset(...)`, `copy_dataset(...)`, `copy_record(...)`
+A worked example: reading a YOLO folder gives a `VisionDataset` whose records each hold an `ImageInfo` and a list of `BBox`es with normalized coordinates. A model transformation attaches an `FMRequest` to the dataset, the model runtime serializes the dataset to JSON for the model process, the process adds boxes, and the runtime reloads the result.
 
-Format I/O (`cvsuite.common.io`):
-- `read_dataset(...)`, `write_dataset(...)` — see `[[common/io]]`
+The reason for having a shared model is in [the shared dataset note](../logs/2026-09-20_shared-dataset-contract.md).
 
-Record-level conventions:
-- one `VisionRecord` represents one image-centric sample
-- `record.image.path` may be absolute, dataset-root-relative, or temporarily rewritten relative to an extracted temp root
-- `record.rel_image_path` preserves source-relative identity when writers need to reconstruct a stable filename or logical path
-- `record.rel_label_path` preserves label-side identity when a writer or stats builder needs it
-- `record.attributes` stores branch-specific temporary and durable metadata
-- `record.round_trip` stores source-format preservation data such as LabelMe shapes
+## Language
 
-Dataset-level conventions:
-- `classes` stores canonical class names in ID order when class IDs are relevant
-- `task` stores a coarse dataset task hint using canonical task ids such as `det`, `inst-seg`, `pose`, `cls`, and `multi-cls`
-- `root` stores the filesystem anchor used to resolve relative record paths
-- `source_format` stores the canonical source format id when known
-- `meta` stores dataset-wide provenance and branch state
+- **Record**: one image-centric sample.
+- **Split**: logical partition such as `train`, `val`, `test`. Some VLM paths keep richer strings such as `train2014`.
+- **Task**: coarse dataset kind, the `Task` enum with canonical ids `det`, `inst-seg`, `pose`, `cls`, `multi-cls`.
+- **Round trip data**: source-format details kept so a writer can reproduce the source (for example LabelMe shapes).
+- **Overlay**: fields cvsuite adds on top of the portable schema (`fm_request`, `embeddings`, `labelme_shapes`, and some annotation fields).
 
-cvsuite runtime overlay (real fields on the containers):
-- `dataset.fm_request` (`FMRequest | None`)
-- `record.embeddings` (`list[Embedding]`)
-- `record.labelme_shapes` (`list[LabelMeShape]`), populated by the LabelMe reader for round-trip preservation
-- annotation fields: `BBox.kind` / `.prompt` / `.model` / `.text`, `Polygon.prompt` / `.model`, `Keypoints.kind`
+## Map
 
-All of these serialize through `to_json` / `from_json` like any other field; there are no `_cvsuite_*` storage keys.
+- `common/core/types.py`: value types and runtime dataclasses.
+- `common/core/records.py`: `VisionDataset`, `VisionRecord`, containers and helpers.
+- `common/core/enums.py`: `Task`, `IMG_EXTS`.
+- `common/core/utils.py`: JSON encoding and decoding.
+- Format reading and writing: [io](io.md).
 
-## 4. Business Decisions and Strict Policies
-- The dataset contract is owned once, in `cvsuite.common.core`. No branch may reintroduce a competing dataset container hierarchy.
-- No branch is forced to expose the shared contract as a user-visible format.
-- The contract is intentionally richer than any single export format:
-  - geometry is normalized into boxes, polygons, and keypoints
-  - classification and VQA payloads can coexist on the same record
-  - round-trip preservation data can be carried beside normalized annotations
-- `VisionDataset.resized(...)` changes image dimensions and writes `resize_to` metadata on both records and dataset meta, but intentionally leaves normalized annotation values untouched.
-- Providers are only allowed to read and write through this contract; they do not receive direct access to branch-specific format adapters.
-- `meta` is intentionally not the canonical home for primary FM inputs. Provider name, prompt, batch size, device, precision, config path, checkpoint overrides, and related runtime instructions belong in `dataset.fm_request`.
-- Legacy cvsuite spellings are preserved only at compatibility or CLI boundaries:
-  - `Task.seg` maps to canonical task id `inst-seg`
-  - `images` / `unstructured` label inputs map to canonical `flat`
-  - VLM `json`, `shards`, and `vqa-style` map to canonical `flat_vlm_json`, `shards_vlm`, and `vqa_style`
+## Contracts
 
-## 5. Implementation Details
-- `fm_request`, `embeddings`, and `labelme_shapes` are plain dataclass fields; readers and transforms set them directly and `to_json` / `from_json` carry them.
-- `normalize_dataset(...)` is called by the branch routers and by `from_json`; it coerces `dataset.task` and each `record.task` onto the `Task` vocabulary and otherwise leaves the dataset alone.
-- `copy_dataset(...)` / `copy_record(...)` wrap `dataclasses.replace` and re-normalize task hints.
+### Containers
 
-The shared contract is therefore the common denominator for:
-- source ingestion
-- branch transforms
-- FM execution
-- output writing
-- stats reporting
+`VisionDataset` fields: `records`, `classes`, `task`, `root`, `source_format`, `round_trip`, `meta`, and overlay `fm_request` (`FMRequest | None`).
+Methods: `to_json(path)`, `from_json(path)` (classmethod), `by_split()`, `resized(size)`.
 
-Related docs:
-- `[[dataclasses]]`
-- `[[common/io]]`
-- `[[common/fm_runtime]]`
-- `[[common/fm_provider]]`
-- `[[common/fm_utils]]`
+`VisionRecord` fields: `sample_id`, `image`, `split`, `task`, `boxes`, `polys`, `kpts`, `classification`, `vqas`, `semantic_mask`, `rel_image_path`, `rel_label_path`, `source_format`, `round_trip`, `attributes`, and overlay `embeddings` (`list[Embedding]`), `labelme_shapes` (`list[LabelMeShape]`).
+
+Free functions in `cvsuite.common.core`: `normalize_dataset(dataset)`, `copy_dataset(dataset, **changes)`, `copy_record(record, **changes)`.
+
+### Value types (`common/core/types.py`)
+
+- `ImageInfo`: `path`, `source`, `width`, `height`. Dimensions are read lazily from `source`.
+- `BBox`: required `cx`, `cy`, `w`, `h`, `cls`; optional `label`, `score`, `id`, `group_id`, `attributes`; overlay `kind` (default `"det"`), `prompt`, `model`, `text`.
+- `Polygon`: required `points`, `cls`; optional `label`, `score`, `id`, `group_id`, `attributes`; overlay `prompt`, `model`.
+- `Keypoints`: required `points`, `cls`; optional `label`, `score`, `id`, `group_id`, `attributes`; overlay `kind` (default `"pose"`).
+- `Classification`: `label`, `score`, `probs`, `meta`.
+- `VQA`: `question`, `answer`, `score`, `model`, `meta`.
+- `SemanticMaskRef`: `path`, `encoding`, `ignore_index`, `attributes`.
+
+### Runtime dataclasses (`common/core/types.py`)
+
+- `Embedding`: `vector`, `model`, `task`, `meta`.
+- `FMRequest`: `task`, `provider`, `prompt`, `config_path`, `device`, `precision`, `max_gpu_memory`, `batch_size`, `weights_dir`, `model_args`, `meta`. `model` is a property alias of `provider`.
+- `LabelMeShape`: `label`, `shape_type`, `points`, `flags`, `group_id`, `description`, `other_data`.
+
+### Task enum
+
+`Task` has values including `det`, `seg`, `pose`, `cls`, `multi_cls`. `Task.seg.value` is the canonical `inst-seg`. `Task.from_raw(...)` accepts the older spellings and returns canonical values.
+
+### Record and dataset conventions
+
+- `record.image.path` may be absolute, root-relative, or rewritten relative to an extracted temporary root.
+- `record.rel_image_path` and `record.rel_label_path` keep the source-relative identity that writers and stats need.
+- `record.attributes`, `record.round_trip` and `dataset.meta` are open-ended and carry branch provenance. Each branch spec lists the keys it owns.
+- `dataset.classes` holds class names in id order. `dataset.task` is the coarse task hint. `dataset.root` anchors relative paths. `dataset.source_format` is the canonical format id when known.
+
+### JSON
+
+`to_json` / `from_json` (`common/core/utils.py`) serialize every field, including overlay fields, as recursive dicts. `ImageInfo` writes its raw slots without reading dimensions. `Path` values become strings, enums their values, tuples arrays. Missing keys take field defaults. `from_json` runs `normalize_dataset`.
+
+### Model request
+
+`dataset.fm_request` carries the primary model inputs: provider, prompt, config path, batch size, device, precision, checkpoint overrides and related runtime instructions. See [fm_runtime](fm_runtime.md).
+
+## Constraints
+
+- The dataset model MUST be owned only by `cvsuite.common.core`. No branch MAY introduce a competing container hierarchy or a `RecordsDataset` alias.
+- Geometry MUST be stored normalized: `BBox` as centre and size, `Polygon` and `Keypoints` points in `[0, 1]`. Writers convert to format-specific layouts.
+- `BBox.kind`, `.prompt`, `.model`, `.text`, `Polygon.prompt`/`.model` and `Keypoints.kind` MUST be real fields, not derived from `attributes`. `attributes` is for open-ended source data.
+- `Keypoints.points` MUST be the storage field for keypoints; there is no `kpts` alias on the annotation.
+- Primary model inputs MUST go in `dataset.fm_request`, not in `dataset.meta`.
+- `FMRequest.provider` MUST be the storage field, and `model` only an alias.
+- `VisionDataset.resized(...)` MUST change image dimensions and write `resize_to` metadata on records and dataset meta, and MUST NOT change normalized annotation values.
+- `record.labelme_shapes` MUST coexist with normalized annotations so LabelMe round-trips keep source shapes.
+- Models MUST read and write only through this contract. They MUST NOT receive format adapters.
+- No branch is forced to expose the dataset as a user-visible format.
+- Older spellings are accepted only at compatibility or CLI boundaries: `Task.seg` maps to `inst-seg`; `images` / `unstructured` label inputs map to `flat`; VLM `json`, `shards`, `vqa-style` map to `flat_vlm_json`, `shards_vlm`, `vqa_style`.
+- Overlay fields MUST NOT be stored under `_cvsuite_*` keys.
+- `normalize_dataset` and `copy_*` MUST re-normalize task hints (`common/tests/test_contracts.py`).
+
+## History
+
+- [Shared dataset contract](../logs/2026-09-20_shared-dataset-contract.md): why one in-memory model, and why the model request has its own field.

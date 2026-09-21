@@ -1,79 +1,39 @@
 # VLM Output
 
-## 1. General Description
-The VLM output layer writes VLM datasets into three persistent formats and one inspection path: flat JSON pairs, shard TAR archives, normalized VQA-style manifests, and interactive preview. The active structured writers are delegated to `cvsuite.common.io.write_dataset(...)`, while cvsuite keeps split filtering, answer-bucket partitioning, cleanup tracking, and stats/report semantics.
+Related: **Read first** [vlm cli](cli.md). **See also** [vlm transforms](transforms.md), [io](../common/io.md), [stats](../common/stats.md).
 
-## 2. Inputs and Outputs (I/O)
-Output commands:
-- `to-json`
-- `to-shards`
-- `to-vqa-style`
-- `inspect`
+## Overview
 
-Common output args:
-- split filtering through `--split/--splits` on commands that expose it via shared helpers
-- `--with-stats` on supported file-writing outputs
+The VLM outputs write three persistent formats (flat JSON pairs, shard TAR archives, normalized VQA-style manifests) and offer one interactive preview. The structured writers delegate to `cvsuite.common.io.write_dataset(...)`; the branch keeps split filtering, answer-bucket partitioning, cleanup tracking and stats.
 
-Format-specific args:
-- `to-json`
-  - `dst`
-  - `--hardlink`
-  - `--skip-images`
-- `to-shards`
-  - `dst`
-  - `--target-shard-size-mb`
-  - `--max-samples-per-shard`
-- `to-vqa-style`
-  - `dst`
-  - `--hardlink`
-  - `--skip-images`
-- `inspect`
-  - `--split`
-  - `--max`
+## Language
 
-## 3. Interfaces
-Shared output helpers in `vlm/output/common.py`:
-- split filtering supports prefix matching, so `train` matches `train2014`
-- `iter_answer_partitions(dataset)` groups partitioned datasets by `vlm_answer_bucket`
-- `ensure_unpartitioned(dataset)` protects outputs that do not support partitioned datasets
+- **Partitioned dataset**: a dataset after `map-answers`, where each record carries `vlm_answer_bucket`. Outputs write one subdirectory per bucket.
+- **Prefix match**: split filtering where `train` matches `train2014`.
 
-Canonical delegated writers:
-- `to-json` -> canonical format `flat_vlm_json`
-- `to-shards` -> canonical format `shards_vlm`
-- `to-vqa-style` -> canonical format `vqa_style`
+## Map
 
-## 4. Business Decisions and Strict Policies
-- `to-json`, `to-shards`, and `to-vqa-style` all support partitioned datasets. When partitioned, they write one subdirectory per answer bucket.
-- `inspect` does not support partitioned datasets and exits with a clear error.
-- Empty partitions are still materialized for answer mapping outputs so all canonical buckets, including `unclear`, exist.
-- `--skip-images` suppresses image export but still preserves the logical image reference in the written payload.
-- Flat JSON write naming prefers a unique existing relative image stem when available; otherwise it falls back to `sample_key`.
-- Shard ingest and write logic require complete image/JSON pairs; incomplete pairs are treated as errors.
-- cvsuite preserves richer split strings such as `train2014` and only uses prefix matching when users explicitly filter them.
+- `vlm/output/commands/`: `to_json.py`, `to_shards.py`, `to_vqa_style.py`, `inspect.py`.
+- `vlm/output/common.py`: split filtering and partition helpers.
 
-## 5. Implementation Details
-Writer behaviors:
-- `to-json`
-  - writes one JSON sidecar per record
-  - can skip image export
-  - can hardlink exported images
-- `to-shards`
-  - rolls shards by approximate target bytes and/or max samples
-  - writes under `dst/shards/`
-- `to-vqa-style`
-  - writes normalized manifest `vqa.json`
-  - uses `images_root: "images"` even when images are skipped
+## Contracts
 
-Stats behavior through `[[common/stats]]`:
-- VLM stats include:
-  - unique images
-  - total QA pairs
-  - answered/unanswered counts
-  - question-label counts
-  - mapped answer buckets
-  - partitions written and/or shards written
+- `to-json` (canonical `flat_vlm_json`): `dst`, `--hardlink`, `--skip-images`. Writes one JSON sidecar per record.
+- `to-shards` (canonical `shards_vlm`): `dst`, `--target-shard-size-mb`, `--max-samples-per-shard`. Rolls shards by approximate bytes and/or samples, under `dst/shards/`.
+- `to-vqa-style` (canonical `vqa_style`): `dst`, `--hardlink`, `--skip-images`. Writes manifest `vqa.json` with `images_root: "images"`, even when images are skipped.
+- `inspect`: `--split`, `--max`.
+- Common: split filtering through `--split/--splits` where exposed; `--with-stats` on file-writing outputs.
 
-Related docs:
-- `[[vlm/cli]]`
-- `[[vlm/transforms]]`
-- `[[common/stats]]`
+Helpers (`vlm/output/common.py`): split filtering with prefix matching, `iter_answer_partitions(dataset)` (groups by `vlm_answer_bucket`), `ensure_unpartitioned(dataset)`.
+
+Stats (`build_vlm_stats`): unique images, QA pairs, answered and unanswered counts, question-label counts, mapped answer buckets, partitions and shards written.
+
+## Constraints
+
+- `to-json`, `to-shards` and `to-vqa-style` MUST support partitioned datasets by writing one subdirectory per bucket.
+- `inspect` MUST reject partitioned datasets with a clear error.
+- Empty partitions MUST still be materialized for answer-mapping outputs, so all canonical buckets, including `unclear`, exist.
+- `--skip-images` MUST suppress image export and MUST keep the logical image reference in the payload.
+- Flat JSON naming MUST prefer a unique existing relative image stem, else `sample_key`.
+- Shard writing MUST require complete image and JSON pairs.
+- Richer split strings such as `train2014` MUST be preserved; prefix matching applies only when users filter.

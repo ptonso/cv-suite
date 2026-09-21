@@ -1,114 +1,67 @@
 # FM Runtime
 
-## 1. General Description
-The shared FM runtime is the subsystem that turns a shared dataset plus `FMRequest` into a provider subprocess invocation. Its purpose is isolation and repeatability. Branches do not import provider implementations directly for actual inference. Instead, they construct a shared dataset, attach `dataset.fm_request`, and hand the dataset to `FMRunner`, which serializes it, resolves the provider module, prepares or validates the provider environment, and spawns a new Python process.
+Related: **Read first** [records_dataset](records_dataset.md). **See also** [fm_provider](fm_provider.md), [fm_utils](fm_utils.md), [fm_cache](fm_cache.md).
 
-The dataset containers and the `FMRequest` type both live in `cvsuite.common.core`. `dataset.fm_request` is a real field on `VisionDataset`; `VisionDataset.to_json` / `from_json` carry it into and out of the provider subprocess.
+## Overview
 
-## 2. Inputs and Outputs (I/O)
-Inputs:
-- shared dataset object (`cvsuite.common.core.VisionDataset`) with a populated `fm_request`
-- `RunnerConfig`, either created directly or inferred via `RunnerConfig.from_dataset()`
-- optional `no_resume` toggle from branch transforms
+The FM runtime turns a shared dataset carrying an `FMRequest` into a run of a provider in a separate process. Branches never import provider code to run inference. They attach `dataset.fm_request` and hand the dataset to `FMRunner`, which writes it to JSON, resolves the provider module, prepares or checks the provider's virtual environment, starts a new Python process, and reloads the result. The reasons for the process boundary are in [the isolation note](../logs/2026-09-20_isolated-provider-environments.md).
 
-Outputs:
-- a new shared dataset loaded from provider-written `out.json`
-- provider cache directories under `<CVSUITE_HOME>/providers/<provider>/`
-- shared Hugging Face snapshots under `<CVSUITE_HOME>/hub/`
-- resumable FM run state under the runs root
-- temporary stage directories cleaned after each run
+Walk-through of one run: the runner clears the stage directory, writes `in.json`, picks the interpreter (the managed venv for local providers, the current one for API providers), launches the provider with `--input` and `--output`, waits for `out.json`, loads it, and clears the stage directory again.
 
-## 3. Interfaces
-Primary runtime types and functions:
-- `common/fm/core/export.py`
-  - `dump_dataset(ds, path)` delegates to `VisionDataset.to_json(...)`
-  - `load_dataset(path)` delegates to `VisionDataset.from_json(...)`
-- `RunnerConfig`
-  - main fields: `provider_name`, `provider_family`, `provider_class`, `provider_module`, `model_name`, `task`, `device`, `batch_size`, `prompt`, `precision`, `max_gpu_memory`, `config_path`, `weights_dir`, `model_args`
-  - `from_dataset(dataset)` infers provider family from `dataset.fm_request` and dataset metadata
-- `FMRunner`
-  - `from_dataset(dataset)`
-  - `run(dataset, no_resume=False)`
-  - `_ensure_runtime_python()`
-  - `_ensure_venv()`
-  - `_invoke_model(python_bin, in_json, out_json, no_resume=False)`
+## Language
 
-Runtime path/env interfaces:
-- runner attributes include:
-  - `caller_cwd`
-  - `fm_root` (installed package directory; code only, never written to)
-  - `src_root` (import root, derived from `cvsuite.__file__` so it is valid for wheel installs)
-  - `cache_root`
-  - `hub_dir`
-  - `model_cache`
-  - `venv_dir`
-  - `weights_dir`
-  - `pkgs_dir`
-  - `stage_dir`
-- cache root: resolved by `common/fm/core/paths.cvsuite_home()` — see `[[common/fm_cache]]`
-- runs root: temp-directory child `cvsuite-fm-runs`
-- provider subprocess env vars include:
-  - `PYTHONPATH`
-  - `FM_CACHE_DIR`
-  - `FM_HUB_DIR`
-  - `FM_MODEL_CACHE`
-  - `FM_RUNS_ROOT`
-  - `FM_WEIGHTS_DIR`
-  - `FM_STAGE_DIR`
-  - `FM_CALLER_CWD`
-  - `HF_MODULES_CACHE`
+- **Runner** (`FMRunner`), **runner config** (`RunnerConfig`): the objects that perform and describe a run.
+- **Runs root**: temp-directory child `cvsuite-fm-runs`, holding resumable run state.
+- **Health check**: an import probe of a venv that decides whether it must be rebuilt.
 
-Provider subprocess CLI contract:
-- every provider is launched as:
-  - `python -m cvsuite.common.fm.providers.<family>.<provider> --input <in.json> --output <out.json>`
-- `--no-resume` is appended only when the branch requested it
+## Map
 
-## 4. Business Decisions and Strict Policies
-- Runtime family inference is strict:
-  - `dataset.fm_request.task == "gen"` uses `dataset.meta["gen_mode"]` to choose family `create` or `edit`
-  - `task == "classify"` maps to family `classify`
-  - otherwise the family equals the task name unless `request.meta["provider_family"]` overrides it
-- Local providers run in a managed virtualenv; API providers run with the current interpreter.
-- Nothing is written inside the installed package. `FM_WEIGHTS_DIR` stays per-provider for non-Hugging-Face artifacts; `FM_HUB_DIR` is the shared Hugging Face repo cache.
-- `PYTHONPATH` carries only the import root; the old repo-root entry was a source-checkout assumption.
-- Every run resets the stage directory before execution and empties it again in `finally`, even on failure.
-- `--device cpu` explicitly hides GPUs from the provider subprocess by setting `CUDA_VISIBLE_DEVICES=""`.
-- Auto allocator hints are only injected when all of the following are true:
-  - requested device is `auto`
-  - precision is not `nf4`
-  - provider is in the managed Hugging Face auto-placement allowlist
-  - allocator env vars were not already set by the caller
-- `dim_edit` additionally disables CUDA memory caching unless running on CPU.
-- Venv health checks are mandatory. Existing venvs are rebuilt when import probes fail or when specific dependency assertions fail.
-- CUDA-oriented shared-venv providers inject torch package version/index env vars during setup so their setup scripts can install the expected CUDA wheels.
+- `common/fm/core/`: runner, config, `export.py`, `paths.py` ([fm_cache](fm_cache.md)).
+- Providers: [fm_provider](fm_provider.md). Helpers: [fm_utils](fm_utils.md).
 
-## 5. Implementation Details
-Runtime serialization boundary:
-- provider subprocesses only see JSON on disk, not live Python objects
-- `VisionDataset.to_json(...)` / `from_json(...)` serialize every field, including `fm_request`, `embeddings`, and `labelme_shapes`; `from_json` re-runs `normalize_dataset(...)` to coerce task hints after decode
+## Contracts
 
-Process spawn sequence:
-1. `FMRunner.run()` creates cache directories and clears `stage/`.
-2. The input dataset is serialized to `in.json`.
-3. Runtime Python is resolved:
-  - API provider => current `sys.executable`
-  - local provider => managed `venv/bin/python`
-4. `_invoke_model()` launches:
-  - `python -m cvsuite.common.fm.providers.<family>.<provider> --input <in.json> --output <out.json>`
-  - plus `--no-resume` when requested
-5. The provider writes `out.json`.
-6. The runner reloads the dataset from JSON and cleans `stage/`.
+### Types
 
-Health-check details:
-- the venv probe imports both generic dependencies and provider-specific modules
-- `sam3` checks for deprecated `timm.models.layers` imports and triggers rebuild if patching is needed
-- `internvl` health checks include `einops` and `timm`
-- `dim_edit` health checks include `diffusers`, `matplotlib`, `mmcv`, and `transformers`
-- generation model health checks include `accelerate`, `diffusers`, and `transformers`
-- rebuild failures report the last health-check summary in the thrown error
+- `common/fm/core/export.py`: `dump_dataset(ds, path)` and `load_dataset(path)` delegate to `VisionDataset.to_json` / `from_json`.
+- `RunnerConfig`: `provider_name`, `provider_family`, `provider_class`, `provider_module`, `model_name`, `task`, `device`, `batch_size`, `prompt`, `precision`, `max_gpu_memory`, `config_path`, `weights_dir`, `model_args`. `from_dataset(dataset)` infers the family from `dataset.fm_request` and dataset metadata.
+- `FMRunner`: `from_dataset(dataset)`, `run(dataset, no_resume=False)`, `_ensure_runtime_python()`, `_ensure_venv()`, `_invoke_model(python_bin, in_json, out_json, no_resume=False)`. Attributes: `caller_cwd`, `fm_root` (installed package, never written to), `src_root` (import root derived from `cvsuite.__file__`), `cache_root`, `hub_dir`, `model_cache`, `venv_dir`, `weights_dir`, `pkgs_dir`, `stage_dir`.
 
-Related docs:
-- `[[common/fm_provider]]`
-- `[[common/fm_utils]]`
-- `[[common/fm_cache]]`
-- `[[common/records_dataset]]`
+### Provider command line
+
+```
+python -m cvsuite.common.fm.providers.<family>.<provider> --input <in.json> --output <out.json> [--no-resume]
+```
+
+`--no-resume` is appended only when the branch asked for it.
+
+### Environment given to the provider
+
+`PYTHONPATH` (import root only), `FM_CACHE_DIR`, `FM_HUB_DIR` (shared Hugging Face cache), `FM_MODEL_CACHE`, `FM_RUNS_ROOT`, `FM_WEIGHTS_DIR` (per-provider non-Hugging-Face artifacts), `FM_STAGE_DIR`, `FM_CALLER_CWD`, `HF_MODULES_CACHE`. Cache roots come from [fm_cache](fm_cache.md).
+
+### Serialization boundary
+
+The provider sees only JSON on disk. `to_json` / `from_json` carry every field, including `fm_request`, `embeddings` and `labelme_shapes`; `from_json` re-runs `normalize_dataset`.
+
+### Family inference
+
+- `fm_request.task == "gen"`: `dataset.meta["gen_mode"]` chooses family `create` or `edit`.
+- `task == "classify"`: family `classify`.
+- Otherwise the family equals the task name, unless `request.meta["provider_family"]` overrides it.
+
+## Constraints
+
+- Local providers MUST run in a managed virtual environment and API providers in the current interpreter.
+- Nothing MUST be written inside the installed package.
+- Every run MUST reset the stage directory before execution and empty it in `finally`, even on failure.
+- `--device cpu` MUST hide GPUs from the provider process by setting `CUDA_VISIBLE_DEVICES=""`.
+- Allocator hints for auto placement MUST be injected only when the device is `auto`, precision is not `nf4`, the provider is in the managed Hugging Face auto-placement allowlist, and the caller has not set the allocator variables. `dim_edit` additionally disables CUDA memory caching unless running on CPU.
+- Venv health checks MUST run. An existing venv MUST be rebuilt when import probes or specific dependency assertions fail, and a failed rebuild MUST report the last health-check summary in the error. The probe imports generic and provider-specific modules: `sam3` (deprecated `timm.models.layers` imports, patched by rebuild), `internvl` (`einops`, `timm`), `dim_edit` (`diffusers`, `matplotlib`, `mmcv`, `transformers`), generation providers (`accelerate`, `diffusers`, `transformers`).
+- `PYTHONPATH` MUST carry only the import root.
+- Family inference MUST follow the rules above and MUST NOT guess.
+
+## History
+
+- [Isolated provider environments](../logs/2026-09-20_isolated-provider-environments.md): why a run is a separate process.
+- [Shared dataset contract](../logs/2026-09-20_shared-dataset-contract.md): why the request rides on the dataset.
+- [Central model cache](../logs/2026-09-20_central-model-cache.md): why caches are centralized under one root.

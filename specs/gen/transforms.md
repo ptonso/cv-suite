@@ -1,100 +1,55 @@
 # Gen Transforms
 
-## 1. General Description
-Generation transforms are the action stage of `cvsuite gen`. `create` constructs placeholder records from prompt expansions. `edit` ingests source images or datasets and then expands them cartesianly across prompts and sample counts. Both actions then delegate inference to the shared FM runtime with task `gen`, while dataset metadata determines whether the provider family is `create` or `edit`.
+Related: **Read first** [gen cli](cli.md). **See also** [gen output](output.md), [fm_provider](../common/fm_provider.md), [fm_runtime](../common/fm_runtime.md).
 
-## 2. Inputs and Outputs (I/O)
-`create` inputs:
-- repeatable `--prompt` required
-- `--num-images >= 1`
-- runtime args from shared generation runtime:
-  - `--provider/--model`
-  - `--model-id`
-  - `--width`
-  - `--height`
-  - `--device`
-  - `--batch`
-  - `--max-gpu-memory`
-  - `--precision`
-  - `--config`
-  - `--no-resume`
-  - repeatable `--model-arg key=value`
+## Overview
 
-`edit` inputs:
-- positional `src`
-- `--from {auto,yolo,labelme,coco,images,unstructured}`
-- repeatable `--prompt` required
-- `--num-images >= 1`
-- same runtime args as `create`
+Generation actions are the first stage of `cvsuite gen`. `create` builds placeholder records from prompts. `edit` reads source images or datasets and expands every source record across all prompts and sample counts. Both then call the shared model runtime with task `gen`; the dataset metadata decides whether the provider family is `create` or `edit`.
 
-Outputs:
-- `VisionDataset` with generated-result placeholders or FM-mutated outputs
-- `dataset.meta["gen_mode"]` set to `create` or `edit`
-- prompt-expansion metadata and source-summary metadata
+## Language
 
-## 3. Interfaces
-Prompt-expansion interfaces in `gen/core/batch.py`:
-- prompt file extensions recognized: `.yaml`, `.yml`, `.json`
-- supported prompt file payloads:
-  - list of strings,
-  - mapping `id -> prompt`,
-  - list of single-entry mappings
+- **Fanout mode**: how prompts multiply into records. `create` uses `prompt-list` (one record per prompt and sample index); `edit` uses `cartesian` (source record by prompt by sample index).
+- **Output key** (`gen_output_key`): stable key naming a generated image.
 
-Create dataset interface:
-- one record per prompt x sample index
-- initial image path set to `pending/<output_key>.png`
-- record attributes:
-  - `gen_prompt`
-  - `gen_prompt_index`
-  - `gen_sample_index`
-  - `gen_output_key`
+## Map
 
-Edit dataset interface:
-- ingest edit source through `gen.core.router`, which delegates structured cases to label ingest
-- expand source records x prompts x sample index
-- preserve source annotations and copy source record fields
-- add attributes:
-  - `gen_source_record_idx`
-  - `gen_source_image`
-  - `gen_source_key`
-  - prompt/output-key fields
+- `gen/transform/commands/create.py`, `edit.py`.
+- `gen/core/batch.py`: prompt expansion. `gen/core/router.py`: edit-source ingest, which delegates structured cases to label ingest ([label adapters](../label/adapters.md)).
 
-## 4. Business Decisions and Strict Policies
-- Prompt strings from repeated `--prompt` flags preserve order and duplicates.
-- Prompt IDs coming from files must be unique after filename sanitization; collisions are fatal.
-- Non-YAML/JSON existing paths are treated as literal prompt strings rather than prompt files.
-- `--width` and `--height` override any same-name values passed through `--model-arg`.
-- Width and height, when provided, must be positive integers.
-- OpenRouter restrictions are stricter than local providers:
-  - non-default device/precision choices are rejected,
-  - config and max-gpu-memory are rejected,
-  - model IDs must come from the provider’s allowed-model list.
-- Runtime error rewriting is user-facing:
-  - gated Hugging Face access issues are rewritten with actionable guidance,
-  - size-related generation errors can be wrapped in provider-specific size-rejection messages.
+## Contracts
 
-Fanout rules:
-- `create` uses `gen_fanout_mode="prompt-list"`
-- `edit` uses `gen_fanout_mode="cartesian"`
+### create
 
-## 5. Implementation Details
-Generation request construction:
-- branches attach `FMRequest(task="gen", provider=<provider>, prompt=<json payload>, ...)`
-- prompt payload is JSON-encoded list of prompt strings
-- `model_id`, `width`, and `height` are forwarded through `model_args`
+Arguments: repeatable `--prompt` (required), `--num-images >= 1`, and the runtime arguments below.
 
-Create metadata:
-- `gen_prompt_count`
-- `gen_num_images_per_prompt`
-- `gen_fanout_mode`
+### edit
 
-Edit metadata additionally includes:
-- source format
-- source record count
-- source annotation totals for boxes, polygons, and keypoints
+Arguments: positional `src`; `--from {auto,yolo,labelme,coco,images,unstructured}`; repeatable `--prompt` (required); `--num-images >= 1`; the same runtime arguments.
 
-Related docs:
-- `[[gen/cli]]`
-- `[[gen/output]]`
-- `[[common/fm_provider]]`
-- `[[common/fm_runtime]]`
+### Runtime arguments
+
+`--provider/--model`, `--model-id`, `--width`, `--height`, `--device`, `--batch`, `--max-gpu-memory`, `--precision`, `--config`, `--no-resume`, repeatable `--model-arg key=value`.
+
+### Prompt files
+
+Recognized extensions `.yaml`, `.yml`, `.json`. Payloads: a list of strings, a mapping `id -> prompt`, or a list of single-entry mappings.
+
+### Datasets produced
+
+Both set `dataset.meta["gen_mode"]` to `create` or `edit`, plus `gen_prompt_count`, `gen_num_images_per_prompt`, `gen_fanout_mode`.
+
+- create: one record per prompt and sample index, with image path `pending/<output_key>.png` and attributes `gen_prompt`, `gen_prompt_index`, `gen_sample_index`, `gen_output_key`.
+- edit: source records expanded by prompt and sample index, keeping source annotations and record fields, with attributes `gen_source_record_idx`, `gen_source_image`, `gen_source_key` plus the prompt and output-key fields. Metadata adds source format, source record count and source annotation totals for boxes, polygons and keypoints.
+
+### Request
+
+`FMRequest(task="gen", provider=<provider>, prompt=<JSON-encoded list of prompts>, ...)`. `model_id`, `width`, `height` go through `model_args`.
+
+## Constraints
+
+- Prompts from repeated `--prompt` flags MUST keep order and duplicates.
+- Prompt ids from files MUST be unique after filename sanitization; a collision MUST be fatal.
+- An existing path that is not YAML or JSON MUST be treated as a literal prompt string.
+- `--width` and `--height` MUST override same-name `--model-arg` values and MUST be positive integers.
+- OpenRouter runs MUST reject non-default device or precision, `--config` and `--max-gpu-memory`, and MUST accept only model ids from the provider's allowed list ([fm_provider](../common/fm_provider.md)).
+- Gated Hugging Face access errors MUST be rewritten with actionable guidance; size-related generation errors MAY be wrapped in a provider-specific size-rejection message.

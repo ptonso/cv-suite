@@ -1,78 +1,44 @@
 # VLM Adapters
 
-## 1. General Description
-The VLM adapter layer owns how VLM-oriented source formats are detected on disk and normalized into the shared dataset contract plus `record.vqas`. Active canonical parsing and writing now lives in `cvsuite.common.io`; the VLM branch keeps ownership of:
-- public CLI spellings such as `json`, `shards`, and `vqa-style`
-- format-detection precedence
-- prompt/question helpers
-- temp-resource cleanup
-- answer partitioning semantics
+Related: **Read first** [vlm cli](cli.md). **See also** [io](../common/io.md), [records_dataset](../common/records_dataset.md), [vlm transforms](transforms.md), [vlm output](output.md).
 
-All current VLM ingest paths converge on the same internal rule: each logical sample becomes one record, and each question-answer item becomes one `VQA` attached to `record.vqas`.
+## Overview
 
-## 2. Inputs and Outputs (I/O)
-Input formats handled today:
-- image-only trees
-- flat image-plus-JSON sidecar directories
-- TAR shard archives containing paired image and JSON members
-- normalized VQA-style manifests
-- raw VQA-style question/annotation/prediction JSON corpora
+The VLM adapter layer decides how VLM source formats are detected and turns them into the shared dataset plus `record.vqas`. Parsing and writing live in [io](../common/io.md); the branch owns public spellings, detection precedence ([cli](cli.md#format-detection-precedence)), prompt and question helpers, temporary-resource cleanup and answer partitioning.
 
-Outputs produced by the active adapter layer:
-- shared datasets with normalized `record.vqas`
-- record attributes such as `vlm_sample_key`, `vlm_image_id`, `vlm_predominant_label`, and item metadata
-- cleanup metadata for temp extraction directories
+Every format follows one rule: each logical sample becomes one record, and each question-answer item becomes one `VQA` on `record.vqas`.
 
-## 3. Interfaces
-Router and shared IO interfaces:
-- `vlm.core.router.ingest(...)`
-- `vlm.core.io.qa_from_payload(...)`
-- `vlm.core.io.qa_to_payload(...)`
-- `vlm.core.io.load_prompt_spec(...)`
-- `vlm.core.io.cleanup_dataset_resources(...)`
+## Language
 
-Canonical delegated formats:
-- `flat`
-- `flat_vlm_json`
-- `shards_vlm`
-- `vqa_style`
+- **VQA**: one question-answer item. Ground-truth answers sit in `VQA.meta["ground_truth"]` and predicted answers in `VQA.answer`.
+- **Prompt spec**: what `ask` accepts as questions.
 
-## 4. Business Decisions and Strict Policies
-- All formats normalize into `record.vqas`.
-- Ground-truth answers stay in `VQA.meta["ground_truth"]`.
-- Predicted answers stay in `VQA.answer`.
-- Flat JSON and shard formats require complete image/JSON pairing and fail on ambiguous or incomplete pairs.
-- Shard ingest extracts to a temp directory and records that temp root in dataset metadata for mandatory cleanup.
-- VQA-style ingest is intentionally strict about ambiguity:
-  - normalized manifests and raw VQA question files may not coexist for one ingest
-  - ambiguous image-id matches fail instead of guessing
-- Prompt specs used by `ask` may be raw strings, JSON/YAML files, JSON strings, top-level lists, or label-to-questions mappings.
-- cvsuite preserves legacy metadata source spellings such as `json`, `shards`, and `vqa-style` inside QA metadata when those spellings are part of user-visible behavior.
+## Map
 
-## 5. Implementation Details
-Adapter-specific behaviors:
-- flat JSON
-  - matches sibling image and `.json` files by stem
-  - accepts `qa_pairs` or legacy `qas`
-  - preserves split strings exactly as written, rather than canonicalizing them down to `train/val/test`
-  - stores promoted fields such as `image_id`, `predominant_label`, and `original_filename`
-- shards
-  - reads `.tar` members and requires both `<sample>.jpg|png...` and `<sample>.json`
-  - writes extracted images to a temp root and makes `record.image.path` relative to that temp dataset root
-  - records shard provenance in item metadata
-  - preserves richer split strings on read
-- VQA-style normalized manifests
-  - require `items` plus an `images_root`
-  - allow dataset-level manifest metadata to survive into record attributes and QA metadata
-- VQA-style raw corpora
-  - join question JSONs, annotation JSONs, and prediction JSONs by `question_id` and `image_id`
-  - discover images by trailing numeric image ids in filenames
-  - preserve `data_subtype`-style split strings such as `train2014`
-  - preserve question-side metadata, annotation-side expected answers, and prediction-side answers/models/scores
+- `vlm/core/router.py`, `vlm/core/io.py`, `vlm/core/adapters/`.
 
-Cross-links:
-- `[[vlm/cli]]`
-- `[[vlm/transforms]]`
-- `[[vlm/output]]`
-- `[[common/io]]`
-- `[[common/records_dataset]]`
+## Contracts
+
+Inputs: image-only trees; flat image-plus-JSON directories; TAR shards of paired image and JSON members; normalized VQA-style manifests; raw VQA question, annotation and prediction JSON corpora.
+
+Outputs: shared datasets with `record.vqas`; record attributes `vlm_sample_key`, `vlm_image_id`, `vlm_predominant_label`, item metadata; cleanup metadata for temporary extraction directories.
+
+Interfaces: `vlm.core.router.ingest(...)`, `vlm.core.io.qa_from_payload(...)`, `qa_to_payload(...)`, `load_prompt_spec(...)`, `cleanup_dataset_resources(...)`.
+
+Canonical formats delegated to: `flat`, `flat_vlm_json`, `shards_vlm`, `vqa_style`.
+
+Format specifics:
+
+- Flat JSON: matches sibling image and `.json` by stem; accepts `qa_pairs` or `qas`; keeps split strings exactly as written; stores promoted fields `image_id`, `predominant_label`, `original_filename`.
+- Shards: reads `.tar` members and requires both `<sample>.jpg|png...` and `<sample>.json`; extracts to a temporary root and makes `record.image.path` relative to it; records shard provenance in item metadata; keeps richer split strings.
+- VQA-style manifests: require `items` plus `images_root`; dataset-level manifest metadata survives into record attributes and QA metadata.
+- VQA-style raw corpora: join question, annotation and prediction JSONs by `question_id` and `image_id`; find images by trailing numeric ids in filenames; keep `data_subtype`-style splits such as `train2014`; keep question-side metadata, expected answers and predicted answers, models and scores.
+- Prompt specs used by `ask`: raw strings, JSON/YAML files, JSON strings, top-level lists, or label-to-questions mappings.
+
+## Constraints
+
+- All formats MUST normalize into `record.vqas`.
+- Flat JSON and shards MUST require complete image and JSON pairs and MUST fail on ambiguous or incomplete pairs.
+- Shard ingest MUST extract to a temporary directory and record it in dataset metadata for cleanup.
+- Normalized manifests and raw VQA question files MUST NOT coexist in one ingest. Ambiguous image-id matches MUST fail instead of guessing.
+- Older source spellings MUST be kept inside QA metadata where they are user-visible.

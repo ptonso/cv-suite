@@ -247,11 +247,10 @@ def test_docs_tree_exists() -> None:
     root = Path(__file__).resolve().parents[3]
     specs = root / "specs"
     for name in [
+        "README.md",
         "architecture.md",
-        "overview.md",
-        "dataclasses.md",
-        "vocabulary.md",
-        "cli.md",
+        "pipeline.md",
+        "logs/index.md",
     ]:
         assert (specs / name).exists()
     for branch in ["label", "classify", "prep", "vlm", "gen", "common"]:

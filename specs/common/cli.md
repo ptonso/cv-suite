@@ -1,56 +1,36 @@
 # Common CLI
 
-## 1. General Description
-The `common` branch is the shared-operations branch exposed as `cvsuite common`. Unlike the custom pipeline branches, it uses the generic command-discovery mechanism from `cvsuite.branch_cli`. Today its public surface is cache management for FM providers rather than dataset ingestion or export.
+Related: **Read first** [architecture](../architecture.md). **See also** [fm_cache](fm_cache.md).
 
-## 2. Inputs and Outputs (I/O)
-Canonical usage:
-- `cvsuite common <command> [args]`
+## Overview
 
-Currently discovered commands:
-- `cache-path`
-- `cache-list`
-- `cache-purge`
+`cvsuite common` is the branch for shared operations. Its public surface is management of the model cache: where it is, what it holds, and how to purge it. It is not a dataset pipeline, so it uses generic command discovery from `cvsuite.branch_cli` instead of the [pipeline](../pipeline.md) shape.
 
-Outputs:
-- human-readable console output
-- JSON output for cache listing when requested
-- cache deletions or dry-run summaries for purge
+## Map
 
-## 3. Interfaces
-Discovery interface:
-- scans `common/**/commands/*.py`
-- hyphenates path parts and module names into CLI command names
-- imports optional `attach(parser)` and required `run(args)` entry points
+- `src/cvsuite/common/cli.py`: calls `run_generic_branch(...)`.
+- `src/cvsuite/common/cache/commands/`: the command modules.
+- Cache behavior: [fm_cache](fm_cache.md).
 
-Current command interfaces:
-- `cache-path`
-  - `--json`
-- `cache-list`
-  - provider filter
-  - `--json`
-  - `--sort`
-  - `--bytes`
-- `cache-purge`
-  - explicit provider targets or `--all`
-  - `--part all|venv|weights|pkgs|hub`
-  - `--dry-run`
-  - `--yes`
+## Contracts
 
-## 4. Business Decisions and Strict Policies
-- Generic discovery skips `venv` and `__pycache__` directories.
-- `result_to_exit_code()` returns `0` for `None` or `VisionDataset` returns, though common commands currently return plain CLI-oriented results.
-- Missing or unknown requested cache providers raise explicit errors instead of being ignored.
-- `--part hub` addresses the shared Hugging Face hub, which belongs to no single provider, so it rejects provider names.
+Usage: `cvsuite common <command> [args]`.
 
-## 5. Implementation Details
-The `common` branch is implemented in `src/cvsuite/common/cli.py` by calling `run_generic_branch(...)`. That helper:
-1. discovers command specs,
-2. builds argparse subparsers,
-3. attaches command-specific arguments,
-4. dispatches to the selected `run(args)` function.
+Discovery: `common/**/commands/*.py`; path parts and module names are hyphenated into command names; each module has an optional `attach(parser)` and a required `run(args)`.
 
-Related docs:
-- `[[common/fm_cache]]`
-- `[[architecture]]`
-- `[[cli]]`
+Commands:
+
+- `cache-path`: `--json`.
+- `cache-list`: provider filter, `--json`, `--sort`, `--bytes`.
+- `cache-purge`: explicit provider targets or `--all`; `--part all|venv|weights|pkgs|hub`; `--dry-run`; `--yes`.
+
+Output is human-readable text, JSON for cache listings when requested, and deletions or a dry-run summary for purge.
+
+## Constraints
+
+- Discovery MUST skip `venv` and `__pycache__`.
+- `result_to_exit_code()` MUST return `0` for `None` or a `VisionDataset` result.
+- A missing or unknown requested cache provider MUST raise an explicit error.
+- `--part hub` MUST reject provider names.
+
+Command semantics such as confirmation and purge scope are in [fm_cache](fm_cache.md#constraints).

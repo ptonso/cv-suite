@@ -1,87 +1,51 @@
 # VLM CLI
 
-## 1. General Description
-The VLM branch is exposed as `cvsuite vlm` and implements a source-ingest, optional-single-transform, single-output pipeline specialized for captioning, VQA answering, answer mapping, and VLM dataset reformatting. It mirrors the classify CLI shape but adds provider-catalog help and cleanup semantics for temporary extracted resources. All supported source formats ultimately normalize into `record.vqas`; `[[vlm/adapters]]` documents the format-specific details.
+Related: **Read first** [pipeline](../pipeline.md). **See also** [vlm adapters](adapters.md), [vlm transforms](transforms.md), [vlm output](output.md), [fm_runtime](../common/fm_runtime.md).
 
-The active structured-format routing is delegated to `cvsuite.common.io`, while the branch keeps ownership of legacy CLI spellings, prompt seeding, answer partitioning, provider help, and cleanup behavior.
+## Overview
 
-## 2. Inputs and Outputs (I/O)
-Canonical usage:
-- `cvsuite vlm <src> [ingest opts] [<transform> <transform args>] <command> [args]`
+`cvsuite vlm` works on image and question-answer datasets for vision-language models: captioning, answering questions, mapping free-text answers to fixed labels, and reformatting the datasets. It follows the [pipeline](../pipeline.md) shape and adds provider-catalog help and cleanup of temporary extracted resources. Every supported source format ends up as `record.vqas` ([adapters](adapters.md)).
 
-Base inputs:
-- positional `src`
-- `--from {auto,images,json,shards,vqa-style}`
-- `-h/--help`
+Format parsing is delegated to [io](../common/io.md). The branch keeps its public spellings, prompt seeding, answer partitioning, provider help and cleanup.
 
-Transform commands:
-- `caption`
-- `ask`
-- `map-answers`
-- `vqa`
+Example: `cvsuite vlm ./photos caption --provider qwen to-json ./captions`.
 
-Output commands:
-- `to-json`
-- `to-shards`
-- `to-vqa-style`
-- `inspect`
+## Map
 
-## 3. Interfaces
-Help interfaces:
-- branch usage help via `cvsuite vlm --help`
-- provider catalog help via `cvsuite vlm --provider <provider> -h`
-- transform help via `cvsuite vlm <transform> --help`
-- output help via `cvsuite vlm <output> --help`
-- all of the above also work with a leading `<src>` present (e.g.
-  `cvsuite vlm ./ds caption --help`); `--help` is dispatched from the raw argv
-  to the most specific parser named before it
+- `vlm/cli.py`; `vlm/core/router.py`, `io.py`, `adapters/`, `inspect.py`.
+- `vlm/transform/commands/`: `caption.py`, `ask.py`, `vqa.py`, `map_answers.py` ([transforms](transforms.md)).
+- `vlm/output/commands/`: `to_json.py`, `to_shards.py`, `to_vqa_style.py`, `inspect.py` ([output](output.md)).
 
-Provider-catalog interface:
-- when transform help is requested and a provider/model token is already present, the CLI appends that provider’s catalog to the transform parser epilog
-- provider/model names are normalized before catalog lookup
+## Contracts
 
-Execution interface:
-- source ingest occurs through `vlm.core.router.ingest(Path(src), from_hint=...)`
-- transform modules run as `run(dataset, parsed_transform)`
-- output modules run as `run(dataset, parsed_output)`
-- `io.cleanup_dataset_resources(dataset)` always runs in `finally`
+Usage: `cvsuite vlm <src> [ingest opts] [<transform> <transform args>] <command> [args]`.
 
-Format mapping interface:
-- `images` -> canonical `flat`
-- `json` -> canonical `flat_vlm_json`
-- `shards` -> canonical `shards_vlm`
-- `vqa-style` -> canonical `vqa_style`
+Base arguments: positional `src`; `--from {auto,images,json,shards,vqa-style}`; `-h/--help`.
 
-## 4. Business Decisions and Strict Policies
-- Format detection is branch-owned and can fail on ambiguous directory layouts rather than guessing.
-- Temporary resources created during shard extraction are tracked in dataset metadata and must be cleaned even on errors or early exits.
-- Provider help is explicit because VLM providers have model catalogs and alias normalization that users need before runtime.
-- Like classify, only one transform stage is supported before the output command.
-- Help must stay deterministic and offline. Catalog text comes from the shared provider registry rather than live network queries.
-- cvsuite preserves legacy VLM source spellings and some legacy metadata values even though the canonical adapter ids in `cvsuite.common.io` use underscore-based format names.
+Transforms: `caption`, `ask`, `map-answers`, `vqa`. Outputs: `to-json`, `to-shards`, `to-vqa-style`, `inspect`.
 
-## 5. Implementation Details
-Shared helpers from `cvsuite.branch_cli`:
-- `build_parser`, `parse_help`, `split_rest` — see `[[architecture]]` § "Shared pipeline CLI helpers"
-- `apply_transform_output_hints` is not used by this branch
-- missing source returns exit code `1`, not `0`
+Format mapping: `images` to `flat`, `json` to `flat_vlm_json`, `shards` to `shards_vlm`, `vqa-style` to `vqa_style`.
 
-Router detection precedence:
-- directory:
-  - flat JSON
-  - shards
-  - VQA-style
-  - fallback images
-- file:
-  - shards
-  - VQA-style
-  - images
+Help forms, all also working with a leading `<src>` (for example `cvsuite vlm ./ds caption --help`): `cvsuite vlm --help`, `cvsuite vlm --provider <provider> -h`, `cvsuite vlm <transform> --help`, `cvsuite vlm <output> --help`. When transform help is requested and a provider or model token is already present, the CLI appends that provider's catalog to the parser epilog; provider and model names are normalized before lookup.
 
-Ambiguity policy:
-- if a directory matches multiple structured VLM formats, ingest fails instead of choosing one silently
+Execution: `vlm.core.router.ingest(Path(src), from_hint=...)`, transform `run(dataset, parsed_transform)`, output `run(dataset, parsed_output)`, and `io.cleanup_dataset_resources(dataset)` always in `finally`.
 
-Related docs:
-- `[[vlm/adapters]]`
-- `[[vlm/transforms]]`
-- `[[vlm/output]]`
-- `[[common/fm_runtime]]`
+Uses `build_parser`, `parse_help` and `split_rest` from [pipeline](../pipeline.md#helpers-in-cvsuitebranch_cli); `apply_transform_output_hints` is not used.
+
+### Format detection precedence
+
+- Directory: flat JSON, then shards, then VQA-style, then images.
+- File: shards, then VQA-style, then images.
+
+## Constraints
+
+- If a directory matches several structured VLM formats, ingest MUST fail instead of choosing.
+- Temporary resources from shard extraction MUST be tracked in dataset metadata and cleaned even on errors or early exit.
+- Help MUST stay deterministic and offline; catalog text comes from the shared provider registry ([fm_provider](../common/fm_provider.md)).
+- Only one transform MAY appear before the output command.
+- Missing source MUST return exit code `1`.
+- Older source spellings (`json`, `shards`, `vqa-style`) and some older metadata values are preserved, although canonical adapter ids use underscore names.
+
+## History
+
+- [Branch per domain](../logs/2026-09-20_branch-per-domain.md).

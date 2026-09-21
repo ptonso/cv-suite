@@ -1,96 +1,102 @@
 # Architecture
 
-## 1. General Description
-The repository implements a branch-oriented CLI architecture where each top-level subpackage under `src/cvsuite` corresponds either to a public branch or to shared infrastructure. The relationship between CLI shape and repository shape is direct:
-- top-level `src/cvsuite/cli.py` owns `cvsuite <branch>` dispatch
-- branch packages such as `src/cvsuite/classify`, `src/cvsuite/label`, `src/cvsuite/vlm`, `src/cvsuite/gen`, `src/cvsuite/prep`, and `src/cvsuite/common` own branch-specific or shared CLI surfaces
-- `src/cvsuite/common` owns shared compatibility types, runtime-only helpers, FM runtime, stats, cache utilities, and the public `cvsuite common` branch
+Related: **Read first** [README](README.md). **See also** [pipeline](pipeline.md), [records_dataset](common/records_dataset.md), [fm_runtime](common/fm_runtime.md).
 
-The architecture deliberately separates three layers:
-- branch ingest and output policy
-- the shared in-memory dataset contract and its format adapters in `cvsuite.common.core` and `cvsuite.common.io`
-- shared FM execution in `cvsuite.common.fm`
+## Overview
 
-## 2. Inputs and Outputs (I/O)
-Architecture-level inputs:
-- repository layout under `src/cvsuite`
-- Python package metadata in `pyproject.toml`
-- runtime-discovered `commands/` packages and static command registries
-- provider modules and setup scripts under `src/cvsuite/common/fm/providers`
+`cvsuite` is a command-line tool for computer-vision dataset work. You give it a source folder, optionally apply one transformation, and it writes a destination folder. It is exposed as `cvsuite` through the console entry point in `pyproject.toml`.
 
-Architecture-level outputs:
-- the `cvsuite` entry point
-- branch CLIs and generic branch command discovery
-- provider subprocess launches under `[[common/fm_runtime]]`
-- on-disk exports written by branch-owned output commands
+The tool is split by domain. Each domain of computer vision gets one top-level command (a *branch*), and the commands inside a branch are what you can do in that domain. There is no "convert anything to anything" command: each branch owns how it recognizes its input, what its transformations mean, and how its output is laid out. The reasons are in [the branch-per-domain note](logs/2026-09-20_branch-per-domain.md).
 
-## 3. Interfaces
-Top-level interfaces:
-- `cvsuite` is declared as `cvsuite.cli:main`
-- `cvsuite.cli._discover_branches()` scans child directories that contain `cli.py`
-- `classify` is publicly aliased to `class`; underscore names are rendered as hyphenated names
+The branches:
 
-Repository structure and ownership:
-- `src/cvsuite/common`
-  - `core`: the canonical dataset contract (`VisionDataset`, `VisionRecord`, `ImageInfo`, geometry types), the runtime dataclasses (`FMRequest`, `Embedding`, `LabelMeShape`), the `Task` enum, and JSON helpers
-  - `io`: the dataset format router and one adapter per on-disk format (`[[common/io]]`)
-  - `fm`: provider runtime, cache/hub root resolution (`fm/core/paths.py`), provider registry, provider implementations
-  - `stats`: reusable stats emitters used by file-writing outputs
-  - `cache`: CLI-accessible FM cache inspection, root reporting, and purge commands
-- `src/cvsuite/classify`
-  - explicit CLI registry for one optional transform plus one output command
-  - owns the branch-specific multi-class ingest mode and output split policy
-- `src/cvsuite/label`
-  - explicit CLI registry with nested transform packages (`filter`, `ground`, `ocr`, `ops`, `sample`) and output commands
-  - owns multi-source merge semantics, CLI spellings, helper YAML emission, and preview flows
-- `src/cvsuite/vlm`
-  - explicit CLI registry for one optional transform plus one output command
-  - owns answer partitioning, prompt seeding, and cleanup of extracted temp resources
-- `src/cvsuite/gen`
-  - explicit action registry followed by explicit output registry
-  - reuses label-style ingest for edit-source workflows
-- `src/cvsuite/prep`
-  - generic subcommand discovery across `commands/` directories using subparsers, not the record-pipeline pattern used by other branches
-- `src/cvsuite/common/io`
-  - the canonical `read_dataset(...)` / `write_dataset(...)` entrypoints and registry
-  - one adapter per format: YOLO, COCO, LabelMe, semantic-mask, flat images, flat VLM JSON, VQA-style, shards, and class-dir
+- `prep` cleans up raw files before any dataset format applies: unpacking archives, removing duplicates, resizing, fixing rotation, sampling.
+- `label` works on annotated datasets (boxes, polygons, keypoints, masks), including model-assisted grounding and OCR.
+- `class` works on class-folder datasets, including model-based classification.
+- `vlm` works on image and question-answer datasets: captioning, asking questions, answer mapping.
+- `gen` generates or edits images from text prompts.
+- `common` holds shared operations. Its public surface is model-cache management.
 
-Generic command discovery:
-- `[[cli]]` covers the user-facing side
-- internally, `cvsuite.branch_cli.discover_commands()` recursively finds `commands/` folders, converts relative path parts into hyphenated CLI names, imports `attach(parser)` plus `run(args)` when present, and skips `venv` and `__pycache__`
-- `common` and most of `prep` use this generic discovery pattern or a close prep-specific variant; other branches implement custom parsing because they need pipeline-style argument splitting
+Three layers sit under the branches:
 
-Shared pipeline CLI helpers (`cvsuite.branch_cli`):
-- pipeline branches (`classify`, `label`, `vlm`, `gen`) share four helpers defined in `branch_cli`:
-  - `build_parser(module, prog)` — builds an `ArgumentParser` from a command module's `attach()` and docstring
-  - `parse_help(parser, argv)` — triggers the parser's `--help` path and returns `0`; re-raises non-help exits
-  - `split_rest(rest, commands, transform_commands)` — splits the argv tail into `(transform_name, transform_args, command_name, command_args)`; returns `(None, [], None, rest)` when no recognized output command is present
-  - `apply_transform_output_hints(prog, transform_name, parsed_transform, command_name, parsed_command)` — currently propagates `--hardlink` from sampling transforms to outputs that support it
-- branch-specific split logic stays local when the semantics differ from the shared pattern
+1. **Branch policy**: source detection, transformations and output layout, owned by each branch.
+2. **The shared dataset**: one in-memory model of images and annotations, plus one adapter per on-disk format ([records_dataset](common/records_dataset.md), [io](common/io.md)). Every branch except `prep` reads sources into it and writes outputs from it.
+3. **Model execution**: foundation models run as separate processes ([fm_runtime](common/fm_runtime.md), [fm_provider](common/fm_provider.md), [fm_cache](common/fm_cache.md)). This layer never decides output layout or source detection.
 
-## 4. Business Decisions and Strict Policies
-- CLI design follows branch semantics, not one shared parser abstraction. This is why `label`, `classify`, `vlm`, and `gen` each keep custom parsers even though `common` and most of `prep` can reuse generic discovery ideas.
-- Only packages with `cli.py` become public top-level branches. Nested packages are not public branches.
-- The shared dataset contract is owned once, in `cvsuite.common.core`. No branch defines a competing dataset model.
-- Active branch routers call `cvsuite.common.io.read_dataset(...)` / `write_dataset(...)` for canonical formats rather than maintaining duplicate branch-owned readers and writers.
-- The FM layer is intentionally prohibited from deciding export layouts or source detection.
+Walk-through of a typical run, `cvsuite label ./data ground ... to-yolo ./out`: the top-level command hands the arguments to the `label` branch; the branch reads `./data` into the shared dataset; the `ground` transformation attaches a model request and the model runtime runs the model in its own process; the model adds boxes to the dataset; `to-yolo` writes the dataset as a YOLO tree. The shared shape of this flow is in [pipeline](pipeline.md).
 
-## 5. Implementation Details
-Concrete data flow by branch:
-1. `[[cli]]` dispatches to a branch CLI.
-2. The branch CLI splits argv into source tokens, optional transform/action tokens, and output tokens.
-3. Source paths are ingested into the shared dataset contract via `[[common/io]]`, or processed directly by prep.
-4. Optional transforms mutate dataset contents or attach `fm_request`.
-5. If FM-backed, the branch uses `[[common/fm_runtime]]`, which spawns a provider subprocess under `cvsuite.common.fm.providers.*`.
-6. The branch runs a writer/output command and may call `[[common/stats]]`.
+The tool aims at reproducible results. Sampling and split assignment use fixed default seeds, and outputs add a suffix on filename collisions instead of overwriting by default.
 
-Important cross-links:
-- `[[overview]]`
-- `[[cli]]`
-- `[[common/cli]]`
-- `[[dataclasses]]`
-- `[[common/io]]`
-- `[[common/fm_runtime]]`
-- `[[common/fm_provider]]`
-- `[[common/fm_utils]]`
-- `[[common/fm_cache]]`
+For install steps and worked examples see [`../docs/`](../docs/). Specs constrain; guides teach.
+
+## Language
+
+Terms used across several specs. Terms specific to one spec are defined there.
+
+- **Branch**: a top-level command (`prep`, `label`, `class`, `vlm`, `gen`, `common`).
+- **Pipeline branch**: `class`, `label`, `vlm`, `gen`. They follow the [pipeline](pipeline.md) shape.
+- **Ingest**: reading a source folder into the shared dataset.
+- **Transform**: a step that changes the dataset before output. In `gen` it is called an *action*.
+- **Output command**: writes the dataset to a branch-owned on-disk form.
+- **Shared dataset**: `VisionDataset`, made of `VisionRecord`s. See [records_dataset](common/records_dataset.md).
+- **Canonical format id**: the name of an adapter in [io](common/io.md), such as `yolo` or `flat_vlm_json`. Branch spellings map onto these.
+- **FM**: foundation model. **Provider**: the wrapper around one FM, such as `clip`, `qwen`, `sam3`, `openrouter`. **Family**: what a provider does: `classify`, `create`, `edit`, `ground`, `ocr`, `vlm`. **Local provider** runs in its own managed virtual environment, an **API provider** runs in the current interpreter. See [fm_provider](common/fm_provider.md).
+- **`fm_request`**: the model request attached to a dataset before a model runs ([records_dataset](common/records_dataset.md)).
+- **Prompt** means different things per branch: for `class`, the class vocabulary or a label-to-prompts mapping; for grounding, the phrases to find or a label-to-prompts mapping; for `vlm`, questions; for `gen`, text prompts.
+
+## Map
+
+- `src/cvsuite/cli.py`: top-level dispatch. `src/cvsuite/branch_cli.py`: shared command-line helpers.
+- `src/cvsuite/common/`: shared code.
+  - `core/`: the shared dataset ([records_dataset](common/records_dataset.md)).
+  - `io/`: format router and adapters ([io](common/io.md)).
+  - `fm/`: model runtime, provider registry, providers ([fm_runtime](common/fm_runtime.md), [fm_provider](common/fm_provider.md), [fm_utils](common/fm_utils.md)).
+  - `cache/`: cache commands ([fm_cache](common/fm_cache.md), [common cli](common/cli.md)).
+  - `stats/`: `stats.yaml` builders ([stats](common/stats.md)).
+- `src/cvsuite/prep/`: [prep cli](prep/cli.md), [transforms](prep/transforms.md), [output](prep/output.md).
+- `src/cvsuite/label/`: [cli](label/cli.md), [adapters](label/adapters.md), [transforms](label/transforms.md), [filter](label/filter.md), [output](label/output.md).
+- `src/cvsuite/classify/`: [cli](classify/cli.md), [transforms](classify/transforms.md), [output](classify/output.md).
+- `src/cvsuite/vlm/`: [cli](vlm/cli.md), [adapters](vlm/adapters.md), [transforms](vlm/transforms.md), [output](vlm/output.md).
+- `src/cvsuite/gen/`: [cli](gen/cli.md), [transforms](gen/transforms.md), [output](gen/output.md).
+
+Each branch package holds `cli.py`, `core/`, `transform/` (or `commands/` for `prep`) and `output/`.
+
+## Contracts
+
+### Top-level dispatch
+
+`cvsuite.cli:main` is the console entry point.
+
+```
+cvsuite                      # usage
+cvsuite -h | --help          # usage
+cvsuite <branch> [args]      # runs <branch>'s main()
+```
+
+- Public branches are the child packages of `src/cvsuite/` that contain a `cli.py`, found by scanning the filesystem. Nested packages are never public.
+- Public names come from package names: `classify` is aliased to `class`; other underscores become hyphens. The requested token is normalized the same way, then mapped back to the package and imported as `cvsuite.<package>.cli`.
+- An unknown branch prints usage, then raises `SystemExit("Unknown branch: ...")`.
+- Top-level help only scans the filesystem; it does not import branch modules.
+
+### Command discovery below the top level
+
+- `common` and `prep` discover commands from `commands/` folders. `cvsuite.branch_cli.discover_commands()` walks `commands/` folders recursively, turns path parts into hyphenated command names, imports `attach(parser)` (optional) and `run(args)`, and skips `venv` and `__pycache__`. `prep` uses a close local variant ([prep cli](prep/cli.md)).
+- The pipeline branches use custom parsers. See [pipeline](pipeline.md).
+
+### Help
+
+Branch help is offline and deterministic. Provider and model catalogs shown in `--help` come from source metadata read through the provider registry, never from live lookups ([fm_provider](common/fm_provider.md)).
+
+## Constraints
+
+- Only packages with a `cli.py` MUST become public branches. `cvsuite classify` MUST be rejected and `cvsuite class` accepted (`src/cvsuite/tests/test_cli_structure.py`).
+- The shared dataset MUST be defined once, in `cvsuite.common.core`. No branch MAY define a competing dataset model.
+- Branches MUST read and write canonical formats through `cvsuite.common.io.read_dataset` / `write_dataset` and MUST NOT keep duplicate readers or writers.
+- `common` MUST NOT choose folder layouts or dataset schemas. The model layer MUST NOT decide output layout or source detection.
+- Top-level help MUST NOT import every branch.
+- Guardrails belong to the spec that owns the command: for example [`class sample`](classify/transforms.md#sample), [`prep sample`](prep/transforms.md#sample), [`label sample --hardlink`](pipeline.md#hardlink-hint), [`sam3` on CPU](label/transforms.md#ground), and [`--max-gpu-memory`](vlm/transforms.md#constraints).
+
+## History
+
+- [Branch per domain](logs/2026-09-20_branch-per-domain.md): why the CLI is split by computer-vision domain and why `prep`, `class` and the pipeline branches differ.
+- [Shared dataset contract](logs/2026-09-20_shared-dataset-contract.md): why one in-memory model sits between formats and models.

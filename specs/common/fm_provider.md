@@ -1,104 +1,82 @@
 # FM Providers
 
-## 1. General Description
-The provider layer defines what model families exist, how provider names resolve to modules, and what contract each provider subprocess must implement. Providers are split into local providers discovered from package structure and API providers registered explicitly in code. The runtime described in `[[common/fm_runtime]]` treats providers as subprocess modules; the provider layer describes how those modules are found and what they do once launched.
+Related: **Read first** [fm_runtime](fm_runtime.md). **See also** [fm_utils](fm_utils.md), [fm_cache](fm_cache.md), [records_dataset](records_dataset.md).
 
-## 2. Inputs and Outputs (I/O)
-Inputs:
-- Provider names such as `clip`, `siglip2`, `sam3`, `qwen`, `flux`, `qwen_image_edit`, `openrouter`.
-- Provider family context such as `classify`, `ground`, `vlm`, `create`, `edit`, `ocr`.
-- `VisionDataset` JSON payloads plus `FMRequest`.
+## Overview
 
-Outputs:
-- `ProviderSpec` metadata used by branch help and runtime resolution.
-- Provider subprocess modules that mutate a dataset and write `out.json`.
-- Provider-generated metadata stored under `dataset.meta["fm"]` and record-level fields.
+A provider is the wrapper around one foundation model. This spec covers which providers exist, how a name resolves to a module, and what a provider process must do once the [runtime](fm_runtime.md) launches it.
 
-## 3. Interfaces
-Registry layer in `common/fm/providers/registry.py`:
-- local families: `classify`, `create`, `edit`, `ground`, `ocr`, `vlm`
-- `iter_providers_for_family(family, include_descriptions=False)`
-- `resolve_provider_spec(provider_name, family=...)`
-- `resolve_provider_module(provider_name, family=...)`
-- `provider_choices_for_family(family)`
-- `default_model_id_for_provider(provider_name, family=...)`
-- `allowed_model_ids_for_provider(provider_name, family=...)`
-- `format_available_providers(...)`
+Providers come in two kinds. Local providers are discovered from the package structure and run in a managed virtual environment. API providers are registered by hand in code and run in the current interpreter. Providers are grouped into families by what they do: `classify`, `create`, `edit`, `ground`, `ocr`, `vlm`.
 
-Current local providers covered by the registry and tests include (the family directories under `common/fm/providers/<family>/` are authoritative; the lists below are representative):
+A provider process loads a dataset JSON, validates the `FMRequest`, processes the records in resumable jobs, and writes an output JSON. Branch transformations ([classify](../classify/transforms.md), [label](../label/transforms.md), [vlm](../vlm/transforms.md), [gen](../gen/transforms.md)) build the request; providers never decide output layout.
+
+## Language
+
+- **Provider name**: what branches pass through `--model`, for example `clip`, `qwen`, `sam3`, `openrouter`.
+- **`model_id`**: the backend checkpoint identity, inside `FMRequest.model_args`. Different from the provider name.
+- **Provider spec** (`ProviderSpec`): metadata used by help and resolution.
+- **Base**: a family's shared provider class (`BaseFMModel` and `common/fm/providers/bases/*`).
+- **Managed auto placement**: the VLM path where `--device auto` builds a Hugging Face device map and memory budget.
+- **`fm_tasks`**: record attribute appended by the bases to list which model tasks touched the record.
+
+## Map
+
+- `common/fm/providers/registry.py`: name resolution and help metadata.
+- `common/fm/providers/base.py`, `bases/*`: provider base classes.
+- `common/fm/providers/<family>/<provider>.py`: one module per local provider. The family directories are authoritative for what exists.
+- `common/fm/providers/setup_venv/`: environment setup scripts ([fm_cache](fm_cache.md)).
+- `common/fm/providers/_template.py`: template for a new provider.
+
+Providers at time of writing (representative):
+
 - classify: `clip`, `deep_orientation`, `siglip2`
 - create: `flux`, `qwen_image`, `sana`, `stable_diffusion`
 - edit: `dim_edit`, `flux2_klein`, `instruct_pix2pix`, `ovis_u1_3b`, `qwen_image_edit`, `step1x_edit`
 - ground: `gdino`, `gsam`, `llmdet`, `locate_anything`, `rex_omni`, `sam3`, `yolo_e`
 - ocr: `paddleocr`
 - vlm: `blip`, `cogvlm`, `internvl`, `llava`, `minicpm_v`, `paligemma`, `qwen`
+- API: `openrouter` for `create`, `edit` and `vlm`
 
-Current API providers:
-- `openrouter` for `create`
-- `openrouter` for `edit`
-- `openrouter` for `vlm`
+## Contracts
 
-Provider base contracts in `common/fm/providers/base.py` and `common/fm/providers/bases/*`:
-- `BaseFMModel.build_cli_parser()` exposes `--input`, `--output`, and `--no-resume`
-- `BaseFMModel.run_from_paths(ProcessArgs)` loads `VisionDataset`, validates `FMRequest`, restores checkpoints, processes jobs, updates FM metadata, and writes output JSON
-- resumable job orchestration with `manifest.json`, `state.json`, `records.jsonl`, and `completed_jobs.jsonl`
-- dataclass-based `model_args` validation
-- prompt/config normalization
-- provider-specific job builders and batch processors
+### Registry (`registry.py`)
 
-Module metadata interfaces:
-- local provider help metadata is read from source with `ast`, not by importing heavy model modules
-- concrete provider modules may expose:
-  - `DEFAULT_MODEL_ID`
-  - `PARAMS`
-  - `MODEL_ALIASES`
-  - provider class attribute `description`
+`iter_providers_for_family(family, include_descriptions=False)`, `resolve_provider_spec(provider_name, family=...)`, `resolve_provider_module(provider_name, family=...)`, `provider_choices_for_family(family)`, `default_model_id_for_provider(provider_name, family=...)`, `allowed_model_ids_for_provider(provider_name, family=...)`, `format_available_providers(...)`.
 
-## 4. Business Decisions and Strict Policies
-- Provider names are resolved per family. A provider can exist in one family and not another.
-- Alias resolution is explicit. Example: `minicpm-v` resolves to `minicpm_v`.
-- API providers are not auto-discovered from the filesystem; they are hard-coded `ProviderSpec` entries.
-- Wrapper identity and backend checkpoint identity are intentionally different:
-  - wrapper identity is `provider_name` / `model_name` and is what branch CLIs pass through `--model`
-  - backend checkpoint/runtime identity is `model_id` and belongs inside `FMRequest.model_args`
-- OpenRouter providers have strict allowed-model lists and restrictive runtime semantics compared with local providers.
-- Unknown `--model-arg` keys are fatal when the provider options class is a dataclass. Error messages enumerate supported keys and the options class name.
-- Prompt normalization differs by family but is always done provider-side before job execution.
-- Providers are resumable by default and only ignore prior run state when `--no-resume` is forwarded.
-- Help metadata is deterministic and offline. Source constants and aliases are parsed without loading the heavy provider runtime.
+Module metadata a provider module may expose: `DEFAULT_MODEL_ID`, `PARAMS`, `MODEL_ALIASES`, and a class attribute `description`. Help metadata is read from module source with `ast`, never by importing heavy model modules. The registry skips packages and any module whose filename starts with `_`.
 
-## 5. Implementation Details
-Provider-side behaviors shared across bases:
-- classification base
-  - writes `record.classification`
-  - can null out the winning label when thresholding fails while still preserving probabilities and score
-  - appends `fm_tasks=["classify"]`
-- ground base
-  - reads grounding prompts from record attributes
-  - appends boxes/polygons with `model`, `prompt`, and `group_id`
-  - finalizes dataset task to `seg` if any polygons remain
-- OCR base
-  - ensures a `text` class exists
-  - writes OCR boxes with `kind="ocr"` and attached text
-- VLM base
-  - answers existing unanswered QAs or creates prompt-derived QA jobs
-  - prepends `<image>\n` when required by the model wrapper
-  - manages auto-placement memory budgeting when `--device auto`
-- generation bases
-  - create jobs are built from prompt-expanded records
-  - edit jobs prefer `gen_source_image` when present
-  - generated images are materialized under provider work directories before the branch output writer moves them
+### Provider process
 
-Source-metadata extraction details:
-- `_source_local_provider_info(...)` reads `DEFAULT_MODEL_ID`, `PARAMS`, aliases, and class `description` from the module source AST
-- the registry skips packages and any module whose filename starts with `_`
-- compatibility aliases such as `resolve_model_module(...)` and `format_available_models(...)` still exist during the rename from “models” terminology to “providers”
+- `BaseFMModel.build_cli_parser()` exposes `--input`, `--output`, `--no-resume`.
+- `BaseFMModel.run_from_paths(ProcessArgs)` loads the dataset, validates `FMRequest`, restores checkpoints, processes jobs, updates model metadata, and writes the output JSON. Metadata lands in `dataset.meta["fm"]` and on records.
+- Resumable state uses `manifest.json`, `state.json`, `records.jsonl`, `completed_jobs.jsonl`.
+- `model_args` are validated against a dataclass options class.
 
-Related docs:
-- `[[common/fm_runtime]]`
-- `[[common/fm_utils]]`
-- `[[common/fm_cache]]`
-- `[[classify/transforms]]`
-- `[[label/transforms]]`
-- `[[vlm/transforms]]`
-- `[[gen/transforms]]`
+### Family behavior
+
+- classify: writes `record.classification`; may null the winning label when thresholding fails while keeping probabilities and score; appends `fm_tasks=["classify"]`.
+- ground: reads prompts from record attributes (`ground_prompts`); appends boxes and polygons with `model`, `prompt`, `group_id`; sets the dataset task to `seg` if polygons remain.
+- ocr: ensures a `text` class; writes boxes with `kind="ocr"` and text.
+- vlm: answers existing unanswered questions or creates prompt-derived ones; prepends `<image>\n` when the wrapper needs it; manages memory budgeting when `--device auto`.
+- create / edit: create jobs come from prompt-expanded records; edit jobs prefer `gen_source_image` when present; generated images are written under provider work directories before the branch output moves them.
+
+## Constraints
+
+- Provider names MUST be resolved per family; a provider may exist in one family and not another.
+- Aliases MUST be explicit (`minicpm-v` resolves to `minicpm_v`).
+- API providers MUST be hard-coded `ProviderSpec` entries and MUST NOT be discovered from the filesystem.
+- Wrapper identity (`provider_name` / `model_name`, passed as `--model`) MUST stay separate from checkpoint identity (`model_id`, inside `FMRequest.model_args`).
+- OpenRouter providers MUST use strict allowed-model lists and MUST reject device, precision, config and `--max-gpu-memory` options that local providers accept.
+- An unknown `--model-arg` key MUST be fatal when the options class is a dataclass, and the message MUST list the supported keys and the options class name.
+- Prompt normalization MUST happen provider-side, before job execution, and differs per family.
+- Providers MUST be resumable by default and ignore prior state only when `--no-resume` is forwarded.
+- Help metadata MUST be deterministic and offline.
+- Tests: `common/tests/test_base_model.py`, `test_fm_model_bases.py`, `test_gen_model.py`, `test_grounding_wrappers.py`.
+
+## Extending
+
+To add a provider: copy `common/fm/providers/_template.py` into the right family directory, set `DEFAULT_MODEL_ID`, `PARAMS`, `MODEL_ALIASES` and `description`, subclass the family base, and add `setup_venv/<provider>.sh` for a local provider. Reuse the helpers in [fm_utils](fm_utils.md) for paths, precision and Hugging Face sources. An API provider is added as a `ProviderSpec` entry in the registry.
+
+## History
+
+- [Isolated provider environments](../logs/2026-09-20_isolated-provider-environments.md): why local providers are separate processes with their own environments.

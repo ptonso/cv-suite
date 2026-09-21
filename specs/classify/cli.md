@@ -1,94 +1,59 @@
 # Classify CLI
 
-## 1. General Description
-The classify branch is exposed publicly as `cvsuite class`, not `cvsuite classify`. Its CLI implements a single-ingest, optional-single-transform, single-output pipeline specialized for class-directory workflows. The branch is responsible for source detection, classification-specific ingest heuristics, optional FM inference or class-preserving sampling, and class-directory export through `to-class-dir`.
+Related: **Read first** [pipeline](../pipeline.md). **See also** [classify transforms](transforms.md), [classify output](output.md), [io](../common/io.md).
 
-The shared dataset containers used during this branch are from `cvsuite.common.core` (`VisionDataset`, `VisionRecord`, `ImageInfo`), even though cvsuite still exposes compatibility aliases such as `Record` and `ImageRecord`.
+## Overview
 
-## 2. Inputs and Outputs (I/O)
-Canonical usage:
-- `cvsuite class <src> [ingest opts] [<transform> <transform args>] <command> [args]`
+`cvsuite class` works on class-folder datasets: images sorted into one folder per class. It follows the [pipeline](../pipeline.md) shape: read a source, optionally infer classes with a model or sample per class, and write a class-folder tree with `to-class-dir`.
 
-Base CLI inputs:
-- positional `src`
-- `--from {auto,images,unstructured,multi-class}`
-- `-h/--help`
+The branch is public as `class`, not `classify`, for brevity ([the branch note](../logs/2026-09-20_branch-per-domain.md)). It owns source detection for class layouts and a special *multi-class* ingest mode.
 
-Registered transform commands:
-- `infer`
-- `sample`
+Example: `cvsuite class ./photos infer --prompt "cat,dog" to-class-dir ./sorted --threshold 0.6` classifies each photo with a model and writes `./sorted/cat/...`, `./sorted/dog/...`, and `./sorted/unlabeled/...` for low-confidence photos.
 
-Registered output commands:
-- `to-class-dir`
+## Language
 
-Ingest modes:
-- `auto`
-- `images`
-- `unstructured`
-- `multi-class`
+- **Unstructured ingest**: class-folder ingest through canonical `class-dir`, where the label comes from the parent folder or the folder before `images`.
+- **Multi-class ingest**: an ingest mode where one filename may appear under several class folders and so carries several labels.
 
-Output behavior:
-- prints branch usage when help is requested or no source is given
-- routes to one output command
-- returns `0` for normal dataset or writer returns through `result_to_exit_code`
+## Map
 
-## 3. Interfaces
-CLI splitting rules:
-- source parsing happens first through a small base parser
-- remaining tokens are split into:
-  - optional transform name and transform args
-  - required output command and output args
-- only one optional transform is allowed before the output command
+- `classify/cli.py`: parsing and dispatch.
+- `classify/core/io.py`: `ingest(...)`.
+- `classify/transform/commands/*.py`: `infer`, `sample` ([transforms](transforms.md)).
+- `classify/output/commands/*.py`: `to-class-dir` ([output](output.md)).
 
-Help interfaces:
-- `cvsuite class --help` prints pipeline usage
-- `cvsuite class infer --help` and `cvsuite class sample --help` print transform help
-- `cvsuite class to-class-dir --help` prints output help
-- a leading `<src>` does not change this: `--help` is dispatched from the raw
-  argv to the most specific transform/command parser named before it
+## Contracts
 
-Ingest routing interfaces:
-- `images` routes through canonical format `flat`
-- `unstructured` routes through canonical format `class-dir`
-- `multi-class` is still branch-owned special ingest logic because it collapses duplicate basenames across class folders into one shared record
+Usage: `cvsuite class <src> [ingest opts] [<transform> <transform args>] <command> [args]`.
 
-Transform/output wiring:
-- if the chosen transform is `sample` and the user passed `--hardlink`, the CLI copies that hint into the output command, but only if the output command actually exposes a `hardlink` argument
+Base arguments: positional `src`; `--from {auto,images,unstructured,multi-class}`; `-h/--help`.
 
-## 4. Business Decisions and Strict Policies
-- `cvsuite classify` is rejected by the top-level CLI; only `cvsuite class` is valid.
-- The branch refuses `sample` when the source looks like an annotated dataset and explicitly tells the user to use `cvsuite label sample` instead.
-- Multi-class ingest is a first-class ingest mode and is preserved in dataset metadata so downstream logic can behave differently.
-- If the CLI cannot find a recognized output command in the remaining argv, it prints usage and raises `SystemExit` with the unknown token name.
-- Missing source (no `<src>` provided) returns exit code `1`, not `0`.
-- Help handling is command-aware rather than argparse-subparser-based so prompt strings or output-command-like strings can still be accepted as ordinary arguments in other positions.
+Ingest routing:
 
-`--from multi-class` specific policies:
-- expected layout is `<src>/<class>/<filename>` or nested class paths such as `<src>/lights/canopy_light/<filename>`
-- the filename is the deduplication key
-- duplicate filenames across class folders collapse into one shared record
-- split-prefixed trees such as `train/` or `val/` are rejected in this mode; users must use `--from unstructured` instead
-- if two files share a filename but have different image bytes or dimensions, ingest fails fast
-- downstream `to-class-dir` automatically exports those source labels as multi-class even without `--multi-class`
+- `images` goes through canonical `flat`.
+- `unstructured` goes through canonical `class-dir`.
+- `multi-class` is branch-owned logic that collapses duplicate filenames across class folders into one record.
 
-## 5. Implementation Details
-Shared helpers from `cvsuite.branch_cli`:
-- `build_parser`, `parse_help`, `split_rest`, `apply_transform_output_hints` — see `[[architecture]]` § "Shared pipeline CLI helpers"
+Transform commands: `infer`, `sample`. Output commands: `to-class-dir`. Stage splitting, help routing, exit codes and the hardlink hint follow [pipeline](../pipeline.md). Registries are discovered from `classify/transform/commands/*.py` and `classify/output/commands/*.py`.
 
-Command registry is dynamic but shallow:
-- outputs are discovered from `classify/output/commands/*.py`
-- transforms are discovered from `classify/transform/commands/*.py`
-- CLI names are module names with underscores converted to hyphens
+Execution: parse base args, split stages, `classify.core.io.ingest(...)`, optional transform `run(dataset, args)`, output `run(dataset, args)`.
 
-Execution flow:
-1. Parse base args and usage/help.
-2. Split remaining tokens into transform and output stages.
-3. Ingest via `classify.core.io.ingest(...)`.
-4. Optionally run the transform module’s `run(dataset, args)`.
-5. Run the output module’s `run(dataset, args)`.
+### Multi-class ingest
 
-Related docs:
-- `[[classify/transforms]]`
-- `[[classify/output]]`
-- `[[common/io]]`
-- `[[common/records_dataset]]`
+- Layout: `<src>/<class>/<filename>` or nested class paths such as `<src>/lights/canopy_light/<filename>`.
+- The filename is the deduplication key. Duplicate filenames across class folders become one shared record holding all labels.
+- Ingest mode is stored in dataset metadata (`classify_ingest_mode`) and labels in the record attribute `classify_multi_class_labels`, mirrored to the class-dir multi-label attribute (`class_dir_multi_labels`, `CLASS_DIR_MULTI_LABELS_ATTR` in [io](../common/io.md)).
+
+## Constraints
+
+- `cvsuite classify` MUST be rejected; only `cvsuite class` is valid ([architecture](../architecture.md#top-level-dispatch)).
+- `sample` MUST refuse annotated datasets and point to `cvsuite label sample`.
+- Multi-class ingest MUST reject split-prefixed trees such as `train/` or `val/`; users MUST use `--from unstructured`.
+- Multi-class ingest MUST fail if two files with the same filename differ in image bytes or dimensions.
+- `to-class-dir` MUST export multi-class source labels as multi-class even without `--multi-class`.
+- Help handling MUST be command-aware and not subparser-based, so prompt strings that look like command names are accepted as arguments.
+- Missing `<src>` MUST return exit code `1`; an unrecognized output token MUST print usage and raise `SystemExit` naming the token.
+
+## History
+
+- [Branch per domain](../logs/2026-09-20_branch-per-domain.md): why `class` is its own branch and why it is named `class`.

@@ -1,100 +1,54 @@
 # Classify Transforms
 
-## 1. General Description
-The classify branch currently exposes two transforms: `infer` and `sample`. `infer` is the FM-backed classification path. `sample` is the deterministic class-aware sampling path for already labeled class datasets. Both transforms operate over the shared dataset objects used by cvsuite and preserve branch-owned class-directory semantics documented in `[[classify/output]]`.
+Related: **Read first** [classify cli](cli.md). **See also** [classify output](output.md), [fm_runtime](../common/fm_runtime.md).
 
-## 2. Inputs and Outputs (I/O)
-`infer` inputs:
-- `--provider/--model`
-- `--prompt`
-- `--template-prompt`
-- `--device {auto,cpu,gpu}`
-- `--batch`
-- `--precision`
-- `--config`
-- `--no-resume`
+## Overview
 
-`infer` outputs:
-- same dataset object, mutated through `FMRunner`
-- `dataset.fm_request` populated for task `classify`
+The `class` branch has two transforms. `infer` classifies each image with a foundation model. `sample` picks a subset of an already labeled class dataset while keeping class balance rules. Both keep the class-folder semantics that [output](output.md) writes.
 
-`sample` inputs:
-- `--mode {preserve,balance}`
-- exactly one of `--max-n-per-class` or `--max-frac-per-class`
-- `--with-replacement`
-- `--hardlink`
-- `--seed`
+## Language
 
-`sample` outputs:
-- a filtered dataset
-- sampling metadata under `dataset.meta["sample"]`
+- **Preserve** sampling: keep relative class proportions under a cap. **Balance** sampling: force equal per-class targets.
+- **Class template**: a prompt containing `<class>` that is filled with each label.
 
-## 3. Interfaces
-`infer` interface:
-- builds an `FMRequest` with `task="classify"`
-- provider family resolves to `classify`
-- only forwards `template_prompt` through `model_args`
-- invokes `FMRunner.from_dataset(dataset).run(dataset, no_resume=...)`
+## Map
 
-Classification prompt interfaces:
-- `--prompt` may be:
-  - a comma-separated label string
-  - a YAML/JSON label list
-  - a YAML/JSON mapping from label to one or more prompt strings
-- when `--prompt` is list-like, `--template-prompt` is applied by replacing `<class>` with each label
-- explicit prompt maps bypass template injection and use the provided prompt strings verbatim
-- default template is `a photo of a <class>`
+- `classify/transform/commands/infer.py`, `sample.py`.
+- Prompt helpers: [fm_utils](../common/fm_utils.md).
 
-`sample` interface:
-- consumes class labels from `record.classification`
-- writes sampling bookkeeping under `dataset.meta["sample"]`:
-  - `mode`
-  - `seed`
-  - `with_replacement`
-  - `hardlink`
-  - `size_knob` (`max_n_per_class` or `max_frac_per_class`)
-  - `size_value` (the chosen knob's value)
-  - `targets`
-  - `class_sizes`
-  - `sample_size`
+## Contracts
 
-## 4. Business Decisions and Strict Policies
-`infer` policies:
-- if classify ingest mode meta indicates active multi-class ingest, the transform clears the special ingest-mode behavior before FM inference so the dataset becomes a standard inferable classify dataset
-- classification prompting uses the shared class-prompt utilities, including the `<class>` template token requirement for list-like prompts
+### infer
 
-`sample` policies:
-- rejects annotated datasets and tells the user to use `cvsuite label sample`
-- rejects active multi-class ingest datasets because sampling is currently single-label only
-- rejects unlabeled datasets and points the user toward `cvsuite prep sample`
-- rejects datasets that already carry annotations
-- `preserve` mode preserves relative class proportions under a cap
-- `balance` mode forces equal per-class targets under the chosen cap
-- sampling without replacement errors if any target exceeds class size
-- fraction-based targets floor counts, but non-zero target logic still guarantees at least 1 when appropriate in branch code paths that produce positive targets
+Arguments: `--provider/--model`, `--prompt`, `--template-prompt`, `--device {auto,cpu,gpu}`, `--batch`, `--precision`, `--config`, `--no-resume`.
 
-Exact sampling heuristics:
-- `preserve` + `max_n_per_class`
-  - target for class = `floor(class_size * max_n_per_class / max_class_size)`, minimum 1
-- `preserve` + `max_frac_per_class`
-  - target for class = `floor(class_size * frac)`
-- `balance` + `max_n_per_class`
-  - target for every class = exact cap
-- `balance` + `max_frac_per_class`
-  - target for every class = `floor(min_class_size * frac)`, minimum 1
+Builds an `FMRequest(task="classify")`, forwards only `template_prompt` through `model_args`, and calls `FMRunner.from_dataset(dataset).run(dataset, no_resume=...)`. Provider family is `classify`. The dataset is mutated through the runner.
 
-## 5. Implementation Details
-Ingest-side label semantics that transforms depend on:
-- regular unstructured ingest may infer label from the parent folder or from the folder before `images`
-- multi-class ingest groups identical basenames across class folders and stores the full label list in both cvsuite metadata and the canonical class-dir multi-label attribute
-- duplicate basename images in multi-class ingest must be byte-identical and size-identical
+`--prompt` is one of: a comma-separated label string; a YAML/JSON label list; a YAML/JSON mapping from label to one or more prompt strings. For list-like prompts, `--template-prompt` replaces `<class>` with each label (default `a photo of a <class>`). Explicit prompt maps are used verbatim.
 
-Threshold-related logic used later by outputs but rooted in classify semantics:
-- effective label selection prefers `classification.probs` when available
-- global threshold, per-class thresholds, and threshold metadata all participate in output-time label routing
-- multi-class outputs emit all labels meeting threshold rather than only the argmax label
+### sample
 
-Related docs:
-- `[[classify/cli]]`
-- `[[classify/output]]`
-- `[[common/fm_runtime]]`
+Arguments: `--mode {preserve,balance}`; exactly one of `--max-n-per-class` or `--max-frac-per-class`; `--with-replacement`; `--hardlink`; `--seed`.
+
+Reads labels from `record.classification` and writes `dataset.meta["sample"]` with `mode`, `seed`, `with_replacement`, `hardlink`, `size_knob` (`max_n_per_class` or `max_frac_per_class`), `size_value`, `targets`, `class_sizes`, `sample_size`.
+
+Targets:
+
+| mode | knob | target per class |
+|---|---|---|
+| preserve | `max_n_per_class` | `floor(class_size * max_n / max_class_size)`, minimum 1 |
+| preserve | `max_frac_per_class` | `floor(class_size * frac)` |
+| balance | `max_n_per_class` | the cap |
+| balance | `max_frac_per_class` | `floor(min_class_size * frac)`, minimum 1 |
+
+### Threshold semantics used at output
+
+Effective label selection prefers `classification.probs`. Global, per-class and metadata thresholds decide routing; multi-class outputs emit every label meeting its threshold, not only the argmax. See [output](output.md).
+
+## Constraints
+
+- `infer` MUST clear the multi-class ingest mode before inference, so the dataset becomes a standard inferable class dataset.
+- List-like `--prompt` MUST contain the `<class>` template token through `--template-prompt`.
+- `sample` MUST reject annotated datasets (use `cvsuite label sample`), datasets with active multi-class ingest (sampling is single-label only), unlabeled datasets (use `cvsuite prep sample`), and datasets that already carry annotations.
+- `sample` without replacement MUST error if any target exceeds its class size.
+- Fraction targets floor their counts; the formulas above give the minimums.

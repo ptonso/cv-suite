@@ -1,86 +1,33 @@
 # Label Output
 
-## 1. General Description
-The label output layer materializes normalized datasets into annotation formats, audits, previews, and results folders. Canonical dataset writing is delegated to `cvsuite.common.io.write_dataset(...)`.
+Related: **Read first** [label cli](cli.md). **See also** [label adapters](adapters.md), [io](../common/io.md), [stats](../common/stats.md).
 
-cvsuite still owns:
-- CLI spellings
-- split-assignment helpers
-- helper `data.yaml` emission
-- results/audit/inspect outputs
+## Overview
 
-## 2. Inputs and Outputs (I/O)
-Output commands and major args:
-- `to-yolo`
-  - `dst`
-  - `--task {auto,det,seg,pose}`
-  - split-assignment args
-  - `--hardlink`
-  - `--with-stats`
-- `to-labelme`
-  - `dst`
-  - split-assignment args
-  - `--embed-image`
-  - `--hardlink`
-  - `--with-stats`
-- `to-coco`
-  - `dst` (directory; a file path is rejected)
-  - split-assignment args
-  - `--coco-style`
-  - `--no-images` (annotations + `data.yaml` only; `file_name` entries are absolute)
-  - `--hardlink`
-  - `--with-stats`
-- `to-results`
-  - `dst`
-  - `--names-mode`
-  - `--imgsz`
-  - `--max`
-  - split-assignment args
-  - `--skip-annotated`
-  - `--skip-crops`
-  - `--skip-masks`
-  - `--skip-keypoints`
-  - `--with-stats`
-- `audit`
-  - optional `dst`
-  - `--split`
-  - `--thresholds`
-- `inspect`
-  - `--split`
-  - `--task`
-  - `--imgsz`
-  - `--max`
-  - `--show-confidence`
-  - `--show-prompt`
+Label outputs write the dataset as annotation formats (`to-yolo`, `to-labelme`, `to-coco`), or as review artifacts (`to-results`, `audit`, `inspect`). The three format outputs delegate to `cvsuite.common.io.write_dataset(...)`. The branch keeps CLI spellings, split assignment, helper `data.yaml` emission and the review outputs.
 
-## 3. Interfaces
-Shared split-assignment interface:
-- `--val-frac`
-- `--test-frac`
-- `--seed`
-- `--preserve-splits`
-- implemented by `label/output/common.py`
+## Language
 
-Delegated writer interfaces:
-- `to-yolo`, `to-labelme`, and `to-coco` call `cvsuite.common.io.write_dataset(...)`
-- `to-labelme` writes flat `dst/` sidecars for default train-only output and split directories only when `--preserve-splits`, `--val-frac`, or `--test-frac` requests split materialization.
+- **Split assignment**: choosing `train`/`val`/`test` per record from `--val-frac`, `--test-frac`, `--seed`, `--preserve-splits`.
 
-cvsuite-owned outputs:
-- `to-results`
-- `audit`
-- `inspect`
+## Map
 
-## 4. Business Decisions and Strict Policies
-- `to-yolo` still emits helper `data.yaml` and preserves legacy task spelling `seg` there even though canonical internal task ids use `inst-seg`.
-- Every output command materializes a **directory**. `to-coco` writes `<dst>/<split>/_annotations.coco.json`, images under the split dir (unless `--no-images`), and a helper `<dst>/data.yaml` with `format: coco`; `--coco-style` switches to the `images/` + `annotations/annotations_<split>.json` layout.
-- `inspect` remains interactive and intentionally mutates the working dataset when filtering.
+- `label/output/commands/`: `to_yolo.py`, `to_labelme.py`, `to_coco.py`, `to_results.py`, `audit.py`, `inspect.py`.
+- `label/output/common.py`: shared split assignment.
 
-## 5. Implementation Details
-- `to-yolo` / `to-labelme` / `to-coco` build split-assignment from `label/output/common.py`, then hand the dataset to `cvsuite.common.io.write_dataset(...)` with the matching format id.
-- `to-results`, `audit`, and `inspect` are cvsuite-owned and do not go through the io writer.
+## Contracts
 
-Related docs:
-- `[[label/cli]]`
-- `[[label/adapters]]`
-- `[[common/io]]`
-- `[[common/stats]]`
+- `to-yolo`: `dst`, `--task {auto,det,seg,pose}`, split-assignment args, `--hardlink`, `--with-stats`.
+- `to-labelme`: `dst`, split-assignment args, `--embed-image`, `--hardlink`, `--with-stats`. Writes flat `dst/` sidecars for default train-only output, and split directories only when `--preserve-splits`, `--val-frac` or `--test-frac` asks for them.
+- `to-coco`: `dst` (a directory; a file path is rejected), split-assignment args, `--coco-style`, `--no-images` (annotations and `data.yaml` only, with absolute `file_name` entries), `--hardlink`, `--with-stats`. Default layout `<dst>/<split>/_annotations.coco.json` with images under the split dir and helper `<dst>/data.yaml` (`format: coco`); `--coco-style` gives `images/` plus `annotations/annotations_<split>.json`.
+- `to-results`: `dst`, `--names-mode`, `--imgsz`, `--max`, split-assignment args, `--skip-annotated`, `--skip-crops`, `--skip-masks`, `--skip-keypoints`, `--with-stats`.
+- `audit`: optional `dst`, `--split`, `--thresholds`.
+- `inspect`: `--split`, `--task`, `--imgsz`, `--max`, `--show-confidence`, `--show-prompt`.
+
+Shared split-assignment arguments (`label/output/common.py`): `--val-frac`, `--test-frac`, `--seed`, `--preserve-splits`. The three format outputs build the split assignment, then call `write_dataset` with the matching format id. `to-results`, `audit` and `inspect` do not go through the io writer.
+
+## Constraints
+
+- `to-yolo` MUST emit helper `data.yaml` and keep the task spelling `seg` there, although canonical ids use `inst-seg`.
+- Every output command that writes files MUST materialize a directory.
+- `inspect` MAY mutate the working dataset when filtering, and is interactive.

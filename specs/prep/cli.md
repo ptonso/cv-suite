@@ -1,52 +1,39 @@
 # Prep CLI
 
-## 1. General Description
-The prep branch is exposed as `cvsuite prep` and is structurally different from the record-pipeline branches. It uses classic subcommands discovered from `commands/` folders and focuses on raw filesystem cleanup and image normalization. Most prep commands do not produce shared dataset outputs, although some internals temporarily use the shared FM runtime for fallback orientation scoring.
+Related: **Read first** [architecture](../architecture.md). **See also** [prep transforms](transforms.md), [prep output](output.md).
 
-## 2. Inputs and Outputs (I/O)
-Canonical shape:
-- `cvsuite prep <command> [args]`
+## Overview
 
-Discovered commands:
-- `arrange`
-- `orient`
-- `process`
-- `sample`
+`cvsuite prep` prepares raw files before any dataset format applies. Picture a messy folder of zip files, loose images and videos: `prep` arranges, resizes, orients and samples it so that the other branches can then read it.
 
-Outputs:
-- filesystem mutations or newly created destination trees
-- dry-run console reports
-- exit code `0` for normal completion
+It is structurally different from the [pipeline](../pipeline.md) branches. It uses classic subcommands, works on files and folders, and has no transform-then-output chaining. The shared dataset is used only briefly, for the model-based orientation fallback. The reasons are in [the branch note](../logs/2026-09-20_branch-per-domain.md).
 
-## 3. Interfaces
-CLI infrastructure:
-- uses `branch_cli`-style discovery concepts but implemented locally in `prep/cli.py`
-- recursively scans `commands/` directories beneath the prep package
-- each module may expose `register_subcommand(subparsers)`
-- registered parser must set `func`
+## Map
 
-Public command interfaces:
+- `prep/cli.py`: discovery and parsing.
+- `prep/commands/`: `arrange.py`, `orient.py`, `process.py`, `sample.py`.
+- `prep/core/`: implementations ([transforms](transforms.md), [output](output.md)).
+
+## Contracts
+
+Usage: `cvsuite prep <command> [args]`.
+
 - `arrange <src> <dst> ...`
 - `process <src> <dst> ...`
 - `orient <src> <dst> ...`
 - `sample <srcs...> <dst> ...`
 
-## 4. Business Decisions and Strict Policies
-- Unlike other branches, prep does not support transform-plus-output chaining.
-- Only command modules discovered under `commands/` are public.
-- `venv` and `__pycache__` directories are excluded from command discovery.
-- If a registered parser does not set `func`, the CLI errors with “No command selected.”
-- Prep is intentionally file-first. Temporary use of the shared dataset contract for orientation fallback does not make prep a generic dataset-conversion branch.
+Discovery: `prep/cli.py` scans `commands/` directories recursively. A module may expose `register_subcommand(subparsers)`; its parser MUST set `func`. The CLI builds a root `ArgumentParser`, lets each module register, parses argv, calls `args.func(args)`, and turns `None` into exit code `0`.
 
-## 5. Implementation Details
-Execution flow:
-1. Build a root `ArgumentParser`.
-2. Discover all prep command modules.
-3. Let each module register its subparser and `func`.
-4. Parse argv and call `args.func(args)`.
-5. Convert `None` to exit code `0`.
+Results are filesystem changes or new destination trees, dry-run console reports, and exit code `0` on completion.
 
-Related docs:
-- `[[prep/transforms]]`
-- `[[prep/output]]`
-- `[[architecture]]`
+## Constraints
+
+- Only modules discovered under `commands/` MUST be public. `venv` and `__pycache__` MUST be excluded.
+- If a registered parser does not set `func`, the CLI MUST fail with "No command selected."
+- `prep` MUST NOT support transform-plus-output chaining.
+- `prep` MUST stay file-first. Its temporary use of the shared dataset for orientation MUST NOT turn it into a dataset-conversion branch.
+
+## History
+
+- [Branch per domain](../logs/2026-09-20_branch-per-domain.md): why `prep` works on files instead of the shared dataset.

@@ -1,162 +1,60 @@
 # Prep Transforms
 
-## 1. General Description
-Prep commands are effectively the branch’s transform layer because they perform the actual content and layout mutations. They operate directly on filesystem trees rather than on label-style dataset exports. The four commands cover structure normalization, pixel normalization, orientation correction, and pooled flat-folder sampling.
+Related: **Read first** [prep cli](cli.md). **See also** [prep output](output.md), [fm_runtime](../common/fm_runtime.md).
 
-## 2. Inputs and Outputs (I/O)
-`arrange` inputs:
-- `src`, `dst`
-- `--unzip`
-- `--flatten [plain|enc-prefix|enc-suffix]`
-- `--exact-dedup`
-- `--perceptual-dedup [THRESHOLD]`
-- `--rename-seq`
-- `--dst-subdir NAME`
-- `--link-mode {copy,move,hard}`
-- `--non-image {skip,collect,keep}`
-- `--dry-run`
-- `--no-manifest`
-- `-v/--verbose`
+## Overview
 
-`process` inputs:
-- `src`, `dst`
-- `--orient`
-- `--size`
-- `--resize-mode {long,short,square,cap-long,cap-short}`
-- `--square-mode {pad,crop,distort}`
-- `--grayscale`
-- `--to-format`
-- `--backend {opencv,pillow}`
-- `--jpeg-quality 0..100`
-- `--video-sample-mode {skip,collect,keep}`
-- `--video-sample-k`
-- `--video-sample-min-gap`
-- `--transfer {copy,move}`
-- `--non-image {skip,collect,keep}`
-- `--dry-run`
-- `--no-manifest`
-- `-v/--verbose`
+The four `prep` commands do the real work of the branch: `arrange` normalizes folder structure, `process` normalizes pixels, `orient` corrects rotation, and `sample` pools images into one flat subset. They operate directly on filesystem trees.
 
-`orient` inputs:
-- `src`, `dst`
-- `--try-hardlink`
-- `--batch`
-- `--device`
-- `--precision`
-- `--weights`
-- `--no-resume`
-- `--dry-run`
-- `-v/--verbose`
+## Language
 
-`sample` inputs:
-- one or more `srcs`
-- `dst`
-- `--count` or `--frac`
-- `--seed`
-- `--hardlink`
-- `--dry-run`
-- `-v/--verbose`
+- **Flatten**: collapsing folders into one level; `plain` keeps basenames, `enc-prefix` and `enc-suffix` encode the parent path into the name.
+- **Non-image policy**: what to do with files that are not images: `keep`, `skip`, `collect`.
+- **Reserved names**: `_non_images`, `_video_frames`, `manifest.yaml` (`prep/core/fs.py`).
 
-## 3. Interfaces
-Dataclass configs in `prep/core/config.py`:
-- `ArrangeConfig`
-- `ProcessConfig`
-- `OrientConfig`
-- `SampleConfig`
+## Map
 
-Core command interfaces:
-- `run_arrange_core(config)`
-- `run_process_core(config)`
-- `run_orient_core(config)`
-- `run_sample_core(config)`
+- Configs: `prep/core/config.py` (`ArrangeConfig`, `ProcessConfig`, `OrientConfig`, `SampleConfig`).
+- Entry points: `run_arrange_core`, `run_process_core`, `run_orient_core`, `run_sample_core`.
+- `prep/core/actions.py`, `arrange/ops.py`, `process/*`, `orient/deep_orientation.py` (primary fallback), `orient/clip.py` (auxiliary scorer helper).
 
-Support interfaces:
-- file-action planning in `prep/core/actions.py`
-- arrange file-entry operations in `prep/core/arrange/ops.py`
-- image/video process ops in `prep/core/process/*`
-- primary orientation fallback in `prep/core/orient/deep_orientation.py`
-- auxiliary CLIP upright scorer helper in `prep/core/orient/clip.py`
+## Contracts
 
-## 4. Business Decisions and Strict Policies
-`arrange`:
-- `--flatten` with no value means `plain`
-- absent `--flatten` means no flattening
-- `--dry-run` implies verbose output
-- `--exact-dedup` and `--perceptual-dedup` are mutually exclusive
-- `--exact-dedup` is first-seen-wins using `(size, sha1)` identity, and also skips incoming files whose `(size, sha1)` already exists under `dst`
-- `--perceptual-dedup [THRESHOLD]` is first-seen-wins using pHash Hamming distance `<= THRESHOLD` (default 5, lower is stricter), applies to images only, and also skips incoming images within threshold of any image already under `dst`
-- in perceptual mode non-image files pass through untouched (only `--non-image` policy applies)
-- `--rename-seq` starts after the largest existing sequence id under `dst`
-- `--rename-seq` preserves relative directories unless `--flatten` is set
-- `--dst-subdir NAME` writes kept current-source files under `dst/NAME/`
-- long-running arrange scans and hashing steps emit tqdm progress bars
-- non-image policy:
-  - `keep` => leave in-place relative layout
-  - `skip` => omit
-  - `collect` => route under `_non_images/`
+### arrange
 
-`process`:
-- `--resize-mode` requires `--size`
-- `--size` without `--resize-mode` defaults resize mode to `long`
-- `--square-mode` is only valid with `--resize-mode=square`
-- OpenCV is the default image backend; Pillow remains available explicitly
-- OpenCV uses area interpolation when shrinking and cubic interpolation when enlarging
-- JPEG quality defaults to 95 and is recorded with the backend in the process manifest
-- video sampling mode `skip` clears all video-sampling numeric parameters
-- non-image policy mirrors arrange behavior
-- source-file and sampled-frame processing loops emit tqdm progress bars
+`src`, `dst`, `--unzip`, `--flatten [plain|enc-prefix|enc-suffix]` (no value means `plain`, absent means no flattening), `--exact-dedup`, `--perceptual-dedup [THRESHOLD]`, `--rename-seq`, `--dst-subdir NAME`, `--link-mode {copy,move,hard}`, `--non-image {skip,collect,keep}`, `--dry-run`, `--no-manifest`, `-v/--verbose`.
 
-`orient`:
-- `OrientConfig` does not contain a prompt field; current runtime inputs are source/destination, hardlink preference, batch, device, precision, optional weights, verbosity, dry-run, and `no_resume`
-- `--batch` must be at least 1
-- `--device` defaults to `cpu` (the `deep_orientation` venv is CPU-only); `auto` is normalized to `cpu`
-- EXIF orientation is preferred over model fallback
-- destination must live outside the source tree
-- unchanged files may be hardlinked when requested
-- dry-run only reports planned actions
-- the main model fallback path is `deep_orientation`; the older CLIP scorer helper still exists in code but is not the primary orientation workflow
+- Exact dedup: first seen wins by `(size, sha1)`; also skips incoming files already under `dst`.
+- Perceptual dedup: first seen wins by pHash Hamming distance `<= THRESHOLD` (default 5; lower is stricter); images only; also skips incoming images near any image already under `dst`. Non-image files pass through under the `--non-image` policy.
+- `--rename-seq` names images `000001.ext`, starting after the largest sequence id under `dst`, and keeps relative directories unless `--flatten` is set.
+- `--dst-subdir NAME` writes kept files under `dst/NAME/`.
+- Non-image policy: `keep` leaves the relative layout, `skip` omits, `collect` routes under `_non_images/`.
 
-`sample`:
-- requires exactly one of `--count` or `--frac`
-- rejects negative count
-- rejects annotated datasets and points the user to `cvsuite label sample`
-- rejects nested directory trees and points the user to `cvsuite class sample`, but ignores the prep artefacts `_non_images/`, `_video_frames/`, and `manifest.yaml` so an `arrange`/`process` output can be sampled directly
-- each source must be a flat raw-image folder containing at least one image
-- all sources are pooled into one sampling set and the output is always flat
+### process
 
-`arrange` / `process` / `sample` all fail fast when the source directory is missing, is not a directory, or contains no images (or videos, for `process`).
+`src`, `dst`, `--orient`, `--size`, `--resize-mode {long,short,square,cap-long,cap-short}`, `--square-mode {pad,crop,distort}`, `--grayscale`, `--to-format`, `--backend {opencv,pillow}`, `--jpeg-quality 0..100`, `--video-sample-mode {skip,collect,keep}`, `--video-sample-k`, `--video-sample-min-gap`, `--transfer {copy,move}`, `--non-image {skip,collect,keep}`, `--dry-run`, `--no-manifest`, `-v/--verbose`.
 
-The names `_non_images`, `_video_frames`, and `manifest.yaml` are reserved prep-artefact names (`prep/core/fs.py`).
+- Image operation order: EXIF transpose, resize, square pad/crop/distort, grayscale, format conversion.
+- Default backend OpenCV (area interpolation when shrinking, cubic when enlarging); Pillow on request. JPEG quality defaults to 95 and is recorded with the backend in the manifest.
+- Video frames go to `_video_frames/` (`collect`) or beside the source path under `<stem>_frames/` (`keep`).
 
-## 5. Implementation Details
-Important command behaviors:
-- `arrange`
-  - flatten modes:
-    - `plain`: basename only
-    - `enc-prefix`: encode all parent parts before filename
-    - `enc-suffix`: append encoded parent path after stem
-  - `rename_seq` renames images like `000001.ext`
-  - successful non-dry-run `arrange` and `process` runs write `manifest.yaml` unless `--no-manifest` is set
-- `process`
-  - image op order:
-    1. EXIF transpose
-    2. resize
-    3. square pad/crop/distort
-    4. grayscale
-    5. format conversion
-  - video frame sampling can route to `_video_frames/` or sibling `<stem>_frames/`
-- `orient`
-  - builds a temporary shared dataset only for the fallback FM scoring step
-  - uses provider `deep_orientation` with classify-family runtime metadata
-  - predicted class mapping is:
-    - `correct` => `0`
-    - `rotate_90_clockwise` => `270`
-    - `rotate_180` => `180`
-    - `rotate_90_counter_clockwise` => `90`
-- `sample`
-  - pools all candidate images across all sources before sampling
+### orient
 
-Related docs:
-- `[[prep/cli]]`
-- `[[prep/output]]`
-- `[[common/fm_runtime]]`
+`src`, `dst`, `--try-hardlink`, `--batch`, `--device`, `--precision`, `--weights`, `--no-resume`, `--dry-run`, `-v/--verbose`. There is no prompt field.
+
+- EXIF orientation is preferred; otherwise the `deep_orientation` provider scores the image. It builds a temporary shared dataset with classify-family metadata only for this step.
+- Class-to-angle mapping: `correct` gives `0`, `rotate_90_clockwise` gives `270`, `rotate_180` gives `180`, `rotate_90_counter_clockwise` gives `90`.
+
+### sample
+
+One or more `srcs`, `dst`, `--count` or `--frac`, `--seed`, `--hardlink`, `--dry-run`, `-v/--verbose`. All sources are pooled before sampling and the output is flat.
+
+## Constraints
+
+- `arrange`, `process` and `sample` MUST fail fast when the source is missing, is not a directory, or holds no images (or no videos, for `process`).
+- `arrange`: `--dry-run` MUST imply verbose. `--exact-dedup` and `--perceptual-dedup` MUST be mutually exclusive.
+- `process`: `--resize-mode` MUST require `--size`; `--size` without a mode MUST default to `long`; `--square-mode` MUST be valid only with `--resize-mode=square`; video mode `skip` MUST clear all video-sampling numeric parameters.
+- `orient`: `--batch` MUST be at least 1. `--device` MUST default to `cpu` (the `deep_orientation` venv is CPU-only) and `auto` MUST become `cpu`. The destination MUST be outside the source tree. `--dry-run` MUST only report planned actions.
+- `sample` MUST require exactly one of `--count` or `--frac`, MUST reject negative counts, MUST reject annotated datasets (use `cvsuite label sample`), and MUST reject nested directory trees (use `cvsuite class sample`) while ignoring `_non_images/`, `_video_frames/` and `manifest.yaml` so an `arrange` or `process` output can be sampled directly. Each source MUST be a flat image folder with at least one image.
+- Long-running `arrange` and `process` loops MUST show tqdm progress bars.
+- Prep-artefact names MUST NOT be used for user files.
