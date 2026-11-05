@@ -4,7 +4,7 @@ Related: **Read first** [pipeline](../pipeline.md). **See also** [classify trans
 
 ## Overview
 
-`cvsuite class` works on class-folder datasets: images sorted into one folder per class. It follows the [pipeline](../pipeline.md) shape: read a source, optionally infer classes with a model or sample per class, and write a class-folder tree with `to-class-dir`.
+`cvsuite class` works on class-folder datasets: images sorted into one folder per class. It follows the [pipeline](../pipeline.md) shape: read a source, apply any number of transforms (infer classes with a model, sample per class, select, remap classes, split), and write a class-folder tree with `to-class-dir`.
 
 The branch is public as `class`, not `classify`, for brevity ([the branch note](../logs/2026-09-20_branch-per-domain.md)). It owns source detection for class layouts and a special *multi-class* ingest mode.
 
@@ -24,7 +24,7 @@ Example: `cvsuite class ./photos infer --prompt "cat,dog" to-class-dir ./sorted 
 
 ## Contracts
 
-Usage: `cvsuite class <src> [ingest opts] [<transform> <transform args>] <command> [args]`.
+Usage: `cvsuite class <src> [ingest opts] [<transform> <transform args>]... <command> [args]`.
 
 Base arguments: positional `src`; `--from {auto,images,unstructured,multi-class}`; `-h/--help`.
 
@@ -34,9 +34,9 @@ Ingest routing:
 - `unstructured` goes through canonical `class-dir`.
 - `multi-class` is branch-owned logic that collapses duplicate filenames across class folders into one record.
 
-Transform commands: `infer`, `sample`. Output commands: `to-class-dir`. Stage splitting, help routing, exit codes and the hardlink hint follow [pipeline](../pipeline.md). Registries are discovered from `classify/transform/commands/*.py` and `classify/output/commands/*.py`.
+Transform commands: `infer` (model-backed), `sample`, `select`, `remap-classes`, `split`. Output commands: `to-class-dir`. Stage splitting, chaining, help routing and exit codes follow [pipeline](../pipeline.md). Registries are discovered from `classify/transform/commands/*.py` and `classify/output/commands/*.py`.
 
-Execution: parse base args, split stages, `classify.core.io.ingest(...)`, optional transform `run(dataset, args)`, output `run(dataset, args)`.
+Execution: parse base args, split and parse every stage, `classify.core.io.ingest(...)`, each transform `run(dataset, args)` in order, output `run(dataset, args)`, then removal of temporary folders.
 
 ### Multi-class ingest
 
@@ -47,6 +47,7 @@ Execution: parse base args, split stages, `classify.core.io.ingest(...)`, option
 ## Constraints
 
 - `cvsuite classify` MUST be rejected; only `cvsuite class` is valid ([architecture](../architecture.md#top-level-dispatch)).
+- The chain rules of [pipeline](../pipeline.md#constraints) apply: any number of transforms, and `infer`, the only model-backed one, first.
 - `sample` MUST refuse annotated datasets and point to `cvsuite label sample`.
 - Multi-class ingest MUST reject split-prefixed trees such as `train/` or `val/`; users MUST use `--from unstructured`.
 - Multi-class ingest MUST fail if two files with the same filename differ in image bytes or dimensions.
@@ -57,3 +58,4 @@ Execution: parse base args, split stages, `classify.core.io.ingest(...)`, option
 ## History
 
 - [Branch per domain](../logs/2026-09-20_branch-per-domain.md): why `class` is its own branch and why it is named `class`.
+- [Chained transforms and split as a transform](../logs/2026-11-05_chained-transforms-and-split.md): why a run takes several transforms.

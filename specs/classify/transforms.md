@@ -1,10 +1,10 @@
 # Classify Transforms
 
-Related: **Read first** [classify cli](cli.md). **See also** [classify output](output.md), [fm_runtime](../common/fm_runtime.md).
+Related: **Read first** [classify cli](cli.md). **See also** [classify output](output.md), [split](../common/split.md), [select and remap](../common/select_remap.md), [sampling](../common/sampling.md), [fm_runtime](../common/fm_runtime.md).
 
 ## Overview
 
-The `class` branch has two transforms. `infer` classifies each image with a foundation model. `sample` picks a subset of an already labeled class dataset while keeping class balance rules. Both keep the class-folder semantics that [output](output.md) writes.
+The `class` branch has five transforms, and they chain ([pipeline](../pipeline.md#chaining)). `infer` classifies each image with a foundation model. `sample` picks a subset of an already labeled class dataset while keeping class balance rules. `select`, `remap-classes` and `split` are shared with the `label` branch and keep the class-folder semantics that [output](output.md) writes.
 
 ## Language
 
@@ -13,14 +13,14 @@ The `class` branch has two transforms. `infer` classifies each image with a foun
 
 ## Map
 
-- `classify/transform/commands/infer.py`, `sample.py`.
+- `classify/transform/commands/infer.py`, `sample.py`, `select.py`, `remap_classes.py`, `split.py`. The last three call `common/transforms/` and `common/splitting.py`.
 - Prompt helpers: [fm_utils](../common/fm_utils.md).
 
 ## Contracts
 
 ### infer
 
-Arguments: `--provider/--model`, `--prompt`, `--template-prompt`, `--device {auto,cpu,gpu}`, `--batch`, `--precision`, `--config`, `--no-resume`.
+Arguments: `--provider/--model`, `--prompt`, `--template-prompt`, `--device {auto,cpu,gpu}`, `--batch`, `--precision`, `--config`, `--no-resume`. The module declares `FM = True`.
 
 Builds an `FMRequest(task="classify")`, forwards only `template_prompt` through `model_args`, and calls `FMRunner.from_dataset(dataset).run(dataset, no_resume=...)`. Provider family is `classify`. The dataset is mutated through the runner.
 
@@ -28,9 +28,15 @@ Builds an `FMRequest(task="classify")`, forwards only `template_prompt` through 
 
 ### sample
 
-Arguments: `--mode {preserve,balance}`; exactly one of `--max-n-per-class` or `--max-frac-per-class`; `--with-replacement`; `--hardlink`; `--seed`.
+Arguments: `--mode {preserve,balance}`; exactly one of `--max-n-per-class` or `--max-frac-per-class`; `--with-replacement`; `--seed`.
 
-Reads labels from `record.classification` and writes `dataset.meta["sample"]` with `mode`, `seed`, `with_replacement`, `hardlink`, `size_knob` (`max_n_per_class` or `max_frac_per_class`), `size_value`, `targets`, `class_sizes`, `sample_size`.
+Reads labels from `record.classification` and reports through the step's `info`: `mode`, `seed`, `with_replacement`, `size_knob` (`max_n_per_class` or `max_frac_per_class`), `size_value`, `targets`, `class_sizes`, `sample_size`.
+
+Without replacement, records are ranked within each class by [nested sampling](../common/sampling.md), so for one seed a smaller target selects a subset of what a larger one selects.
+
+### split, select, remap-classes
+
+Contracts are in [split](../common/split.md#command) and [select and remap](../common/select_remap.md). On a class dataset, `split --stratify-by class` balances the record's label, with a multi-label record counted once per label and kept in one split. `select --keep-class` and `--drop-class` act on labels, and `remap-classes` merges class folders. Stratifying by label means thresholds that route records to `unlabeled` at output ([output](output.md)) do not influence the split.
 
 Targets:
 
@@ -52,3 +58,8 @@ Effective label selection prefers `classification.probs`. Global, per-class and 
 - `sample` MUST reject annotated datasets (use `cvsuite label sample`), datasets with active multi-class ingest (sampling is single-label only), unlabeled datasets (use `cvsuite prep sample`), and datasets that already carry annotations.
 - `sample` without replacement MUST error if any target exceeds its class size.
 - Fraction targets floor their counts; the formulas above give the minimums.
+
+## History
+
+- [What belongs in cvsuite](../logs/2026-11-05_what-belongs-in-cvsuite.md): why `split`, `select` and `remap-classes` are shared with `label`.
+- [Chained transforms and split as a transform](../logs/2026-11-05_chained-transforms-and-split.md): why `class` splits as a transform and `sample` lost `--hardlink`.

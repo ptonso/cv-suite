@@ -47,7 +47,7 @@ The four `prep` commands do the real work of the branch: `arrange` normalizes fo
 
 ### sample
 
-One or more `srcs`, `dst`, `--count` or `--frac`, `--seed`, `--hardlink`, `--dry-run`, `-v/--verbose`. All sources are pooled before sampling and the output is flat.
+One or more `srcs`, `dst`, `--count` or `--frac`, `--seed` (default `0`), `--hardlink`, `--dry-run`, `-v/--verbose`. All sources are pooled before sampling and the output is flat. Selection follows [nested sampling](../common/sampling.md): a file's key is its source index and its path relative to that source, so a smaller `--frac` selects a subset of what a larger one selects. `prep` keeps `--hardlink` and its other link flags, because it works on files.
 
 ## Constraints
 
@@ -58,3 +58,7 @@ One or more `srcs`, `dst`, `--count` or `--frac`, `--seed`, `--hardlink`, `--dry
 - `sample` MUST require exactly one of `--count` or `--frac`, MUST reject negative counts, MUST reject annotated datasets (use `cvsuite label sample`), and MUST reject nested directory trees (use `cvsuite class sample`) while ignoring `_non_images/`, `_video_frames/` and `manifest.yaml` so an `arrange` or `process` output can be sampled directly. Each source MUST be a flat image folder with at least one image.
 - Long-running `arrange` and `process` loops MUST show tqdm progress bars.
 - Prep-artefact names MUST NOT be used for user files.
+
+## History
+
+- [What belongs in cvsuite](../logs/2026-11-05_what-belongs-in-cvsuite.md): why every sampler shares one nested selection rule.

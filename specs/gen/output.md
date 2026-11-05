@@ -17,7 +17,7 @@ Related: **Read first** [gen cli](cli.md). **See also** [gen transforms](transfo
 
 ## Contracts
 
-`cvsuite gen ... to-dst <dst> [options]`. Arguments: `dst`, `--overwrite`, `--no-original`, `--with-stats`.
+`cvsuite gen ... to-dst <dst> [options]`. Arguments: `dst`, `--overwrite`, `--no-original`, `--link-mode {copy,hard,sym}` (how original source images are placed, [pipeline](../pipeline.md#link-mode)), `--with-stats`.
 
 Destination interpretation:
 
@@ -35,5 +35,9 @@ Stats (`build_gen_stats`): generation mode, prompt count, fanout mode, image siz
 ## Constraints
 
 - Existing files MUST be replaced only with `--overwrite`.
-- Edit mode MUST export original source images unless `--no-original` is set. Exports MUST be deduplicated by `gen_source_key`, and use hardlinks where possible.
+- Edit mode MUST export original source images unless `--no-original` is set. Exports MUST be deduplicated by `gen_source_key` and placed with `--link-mode`, which MUST NOT fall back to another mode.
 - Output filenames MUST come from stable prompt or sample keys, never from prompt text.
+
+## History
+
+- [Chained transforms and split as a transform](../logs/2026-11-05_chained-transforms-and-split.md): why originals are placed with `--link-mode`.

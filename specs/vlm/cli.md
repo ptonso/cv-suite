@@ -42,7 +42,7 @@ Uses `build_parser`, `parse_help` and `split_rest` from [pipeline](../pipeline.m
 - If a directory matches several structured VLM formats, ingest MUST fail instead of choosing.
 - Temporary resources from shard extraction MUST be tracked in dataset metadata and cleaned even on errors or early exit.
 - Help MUST stay deterministic and offline; catalog text comes from the shared provider registry ([fm_provider](../common/fm_provider.md)).
-- Only one transform MAY appear before the output command.
+- At most one transform MAY appear before the output command, because `vlm` limits its chain to one ([pipeline](../pipeline.md#chaining)).
 - Missing source MUST return exit code `1`.
 - Older source spellings (`json`, `shards`, `vqa-style`) and some older metadata values are preserved, although canonical adapter ids use underscore names.
 

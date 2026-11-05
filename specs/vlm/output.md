@@ -18,10 +18,11 @@ The VLM outputs write three persistent formats (flat JSON pairs, shard TAR archi
 
 ## Contracts
 
-- `to-json` (canonical `flat_vlm_json`): `dst`, `--hardlink`, `--skip-images`. Writes one JSON sidecar per record.
+- `to-json` (canonical `flat_vlm_json`): `dst`, `--link-mode {copy,hard,sym}`, `--skip-images`. Writes one JSON sidecar per record.
 - `to-shards` (canonical `shards_vlm`): `dst`, `--target-shard-size-mb`, `--max-samples-per-shard`. Rolls shards by approximate bytes and/or samples, under `dst/shards/`.
-- `to-vqa-style` (canonical `vqa_style`): `dst`, `--hardlink`, `--skip-images`. Writes manifest `vqa.json` with `images_root: "images"`, even when images are skipped.
+- `to-vqa-style` (canonical `vqa_style`): `dst`, `--link-mode {copy,hard,sym}`, `--skip-images`. Writes manifest `vqa.json` with `images_root: "images"`, even when images are skipped.
 - `inspect`: `--split`, `--max`.
+- Image placement follows [pipeline](../pipeline.md#link-mode). `to-shards` transcodes images and has no link mode.
 - Common: split filtering through `--split/--splits` where exposed; `--with-stats` on file-writing outputs.
 
 Helpers (`vlm/output/common.py`): split filtering with prefix matching, `iter_answer_partitions(dataset)` (groups by `vlm_answer_bucket`), `ensure_unpartitioned(dataset)`.
@@ -37,3 +38,7 @@ Stats (`build_vlm_stats`): unique images, QA pairs, answered and unanswered coun
 - Flat JSON naming MUST prefer a unique existing relative image stem, else `sample_key`.
 - Shard writing MUST require complete image and JSON pairs.
 - Richer split strings such as `train2014` MUST be preserved; prefix matching applies only when users filter.
+
+## History
+
+- [Chained transforms and split as a transform](../logs/2026-11-05_chained-transforms-and-split.md): why `--link-mode` replaced `--hardlink` on these outputs.

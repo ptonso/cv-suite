@@ -22,7 +22,7 @@ Helpers (`utils.py`): `resolve_stats_path(dst)` (file target gives sibling `stat
 
 Builders (`builders.py`): `build_classify_stats`, `build_label_stats`, `build_vlm_stats`, `build_gen_stats`.
 
-Document base: `schema_version: 1`, `branch`, `command`, `output`, `dataset.records`, `dataset.splits`, then branch fields:
+Document base: `schema_version: 1`, `branch`, `command`, `output`, `steps` (the transforms that ran, with their arguments and what each reported, from `dataset.meta["steps"]`), `dataset.records`, `dataset.splits`, then branch fields:
 
 - classify: assignments by output label, unlabeled count, confidence summary, multi-class flags, thresholds.
 - label: prompt counts and OCR text-box counts.
@@ -40,3 +40,8 @@ Users: [classify output](../classify/output.md) (`to-class-dir`), [label output]
 - `score_summary([])` MUST return `{"available": 0}`, never invented min, mean or max.
 - Label names MUST prefer explicit annotation label text, then class-list lookup by `cls`, then the raw value.
 - Builders MUST report branch semantics, not only raw field counts.
+- With folds, each fold's destination MUST get its own `stats.yaml`, built from that fold's dataset.
+
+## History
+
+- [Chained transforms and split as a transform](../logs/2026-11-05_chained-transforms-and-split.md): why `stats.yaml` records the steps and is written per fold.

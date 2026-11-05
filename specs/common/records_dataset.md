@@ -68,6 +68,13 @@ Free functions in `cvsuite.common.core`: `normalize_dataset(dataset)`, `copy_dat
 - `record.attributes`, `record.round_trip` and `dataset.meta` are open-ended and carry branch provenance. Each branch spec lists the keys it owns.
 - `dataset.classes` holds class names in id order. `dataset.task` is the coarse task hint. `dataset.root` anchors relative paths. `dataset.source_format` is the canonical format id when known.
 
+### Keys owned by the pipeline and by split
+
+- `dataset.meta["steps"]`: the ordered list of transforms that ran, each `{"name", "args", "info"}` ([pipeline](../pipeline.md#chaining)). A transform reports through `dataset.meta["step_info"]`, which the chain runner moves into `info`.
+- `dataset.meta["cleanup_dirs"]`: folders of temporary files to remove after the output ran.
+- `dataset.meta["folds"]` is `{"k": K, "present": [i, ...]}` and `record.attributes["fold_splits"]` is a list of K split names, one per fold. Both are set by `split --folds` ([split](split.md#representation)). `record.split` then holds the split of the lowest present fold.
+- Class edits (`select`, `remap-classes`, `ground`, multi-source merge) MUST keep `dataset.classes`, the `cls` and `label` of every annotation, and the class payloads that mirror them in step ([select and remap](select_remap.md#constraints)).
+
 ### JSON
 
 `to_json` / `from_json` (`common/core/utils.py`) serialize every field, including overlay fields, as recursive dicts. `ImageInfo` writes its raw slots without reading dimensions. `Path` values become strings, enums their values, tuples arrays. Missing keys take field defaults. `from_json` runs `normalize_dataset`.
@@ -95,3 +102,4 @@ Free functions in `cvsuite.common.core`: `normalize_dataset(dataset)`, `copy_dat
 ## History
 
 - [Shared dataset contract](../logs/2026-09-20_shared-dataset-contract.md): why one in-memory model, and why the model request has its own field.
+- [Chained transforms and split as a transform](../logs/2026-11-05_chained-transforms-and-split.md): why `meta["steps"]` and the fold attributes exist.
