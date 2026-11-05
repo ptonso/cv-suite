@@ -20,12 +20,14 @@ Related: **Read first** [classify cli](cli.md). **See also** [classify transform
 
 `cvsuite class <src> ... to-class-dir <dst> [options]`
 
-Arguments: `dst`; `--threshold`; `--class-thresholds <yaml>`; repeatable `--class-threshold label=value`; `--multi-class`; repeatable `--exclude-class NAME`; `--hardlink`; `--unlabeled-name` (default `unlabeled`); `--val-frac` (0.0); `--test-frac` (0.0); `--seed` (0); `--randomized`; `--preserve-splits`; `--with-stats`.
+Arguments: `dst`; `--threshold`; `--class-thresholds <yaml>`; repeatable `--class-threshold label=value`; `--multi-class`; repeatable `--exclude-class NAME`; `--hardlink`; `--overwrite`; `--unlabeled-name` (default `unlabeled`); `--val-frac` (0.0); `--test-frac` (0.0); `--seed` (0); `--randomized`; `--preserve-splits`; `--with-stats`.
 
 Layout:
 
 - Flat `<dst>/<label>/<filename>` when both fractions are zero and `--preserve-splits` is off.
 - `<dst>/<split>/<label>/<filename>` when `--preserve-splits` is set or either fraction is above zero.
+
+A class folder (`<label>` or `<split>/<label>`) that already holds files raises unless `--overwrite`, which replaces that folder ([output claims](../common/io.md#output-claims)). Class folders that this run does not write stay on disk.
 
 Inputs consumed: `record.classification`, `classification.probs`, dataset meta, record splits. Copy mode copies bytes; `--hardlink` uses `os.link`.
 
@@ -42,7 +44,12 @@ Stats (`build_classify_stats`): `assignments_by_output_label`, `unlabeled_record
 - `--exclude-class` MUST remove the class before split assignment: its folder never appears, it is stripped from multi-class label sets, and records that belonged only to it are dropped and not sent to unlabeled.
 - Nested class labels such as `lights/canopy_light` MUST stay nested.
 - Path components MUST be sanitized against unsafe names such as `.` and `..`; spaces and slash-separated components are sanitized.
-- Filename collisions MUST be resolved with `_1`, `_2`, and so on.
+- Filename collisions between records of one run MUST be resolved with `_1`, `_2`, and so on.
+- A dirty class folder MUST raise `FileExistsError` unless `--overwrite` is given.
 - Split fractions MUST be non-negative with a sum of at most 1.
 - `--preserve-splits` MUST skip reassignment and keep `record.split`.
 - Multi-class ingest metadata MUST be mirrored into the class-dir multi-label attribute so delegated writing keeps every label.
+
+## History
+
+- [Idempotent outputs](../logs/2026-11-05_idempotent-outputs.md): why a rerun raises unless `--overwrite`.

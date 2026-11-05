@@ -379,8 +379,10 @@ class LabelMeAdapter:
         splits: list[str] | None = None,
         embed_image: bool = False,
         hardlink: bool = False,
+        claims: common.OutputClaims | None = None,
         **options: object,
     ) -> None:
+        claims = claims or common.OutputClaims()
         dst.mkdir(parents=True, exist_ok=True)
         filtered = dataset.records
         if splits:
@@ -392,7 +394,7 @@ class LabelMeAdapter:
 
         for record in filtered:
             out_dir = dst / _record_split(record) if use_split_dirs else dst
-            out_dir.mkdir(parents=True, exist_ok=True)
+            claims.claim(out_dir).mkdir(parents=True, exist_ok=True)
             src = common.resolve_record_image_path(dataset, record)
             stem = src.stem
             suffix = src.suffix

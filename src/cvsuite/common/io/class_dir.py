@@ -483,8 +483,10 @@ class ClassDirAdapter:
         randomized: bool = False,
         multi_label: bool = False,
         preserve_splits: bool = False,
+        claims: common.OutputClaims | None = None,
         **options: object,
     ) -> None:
+        claims = claims or common.OutputClaims()
         if val_frac < 0 or test_frac < 0 or val_frac > 1 or test_frac > 1 or (val_frac + test_frac) > 1:
             raise ValueError("Split fractions must satisfy val_frac + test_frac <= 1.0.")
 
@@ -522,7 +524,7 @@ class ClassDirAdapter:
                 parts = _sanitize_label_parts(label)
                 if split_output:
                     parts.insert(0, assigned_splits[idx] or "train")
-                out_dir = dst.joinpath(*parts)
+                out_dir = claims.claim(dst.joinpath(*parts))
                 out_dir.mkdir(parents=True, exist_ok=True)
                 src = common.resolve_record_image_path(dataset, record)
                 out_path = _next_output_path(out_dir, src.name)

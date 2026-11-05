@@ -12,6 +12,8 @@ from cvsuite.common.stats import (
     make_export_context,
 )
 
+from cvsuite.common.io.attach import attach_overwrite_flag
+
 from ...core import io
 
 
@@ -47,6 +49,7 @@ def attach(parser: argparse.ArgumentParser) -> None:
         help="Repeatable. Drop every class with this name from the output; records belonging only to it are removed.",
     )
     parser.add_argument("--hardlink", action="store_true", help="Hard-link images instead of copying bytes.")
+    attach_overwrite_flag(parser)
     parser.add_argument("--unlabeled-name", default="unlabeled", help="Folder name used when no class label is available.")
     parser.add_argument("--val-frac", type=float, default=0.0, help="Validation split fraction for output assignment.")
     parser.add_argument("--test-frac", type=float, default=0.0, help="Test split fraction for output assignment.")
@@ -91,6 +94,7 @@ def run(dataset, args: argparse.Namespace):
         multi_class=output_multi_class,
         preserve_splits=bool(getattr(args, "preserve_splits", False)),
         exclude_classes=getattr(args, "exclude_class", None),
+        overwrite=bool(getattr(args, "overwrite", False)),
     )
     if bool(getattr(args, "with_stats", False)):
         ctx = make_export_context(

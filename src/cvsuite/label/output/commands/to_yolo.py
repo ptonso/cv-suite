@@ -10,22 +10,22 @@ import argparse
 
 from cvsuite.common.core import VisionDataset
 from cvsuite.common.io import write_dataset
+from cvsuite.common.io.attach import attach_overwrite_flag
 
 from cvsuite.common.stats import attach_with_stats_flag, build_label_stats, emit_stats_yaml, make_export_context
 from cvsuite.label.core.schema import write_data_yaml
 from cvsuite.label.output.common import assign_output_splits, attach_split_assignment_args
 
 
-def _present_splits(ds) -> list[str]:
+def _present_splits(dst: Path) -> list[str]:
+    """Split trees on disk, whichever invocation wrote them: train, val, test, then the rest."""
     preferred = ("train", "val", "test")
-    by_split = ds.by_split()
-    ordered = [name for name in preferred if name in by_split and by_split[name]]
-    extras = [name for name in by_split.keys() if name not in preferred and by_split[name]]
-    return ordered + extras
+    found = {p.parent.name for p in dst.glob("*/images") if any(p.iterdir())}
+    return [name for name in preferred if name in found] + sorted(found - set(preferred))
 
 
-def _yaml_split_paths(ds) -> dict[str, str]:
-    present = _present_splits(ds)
+def _yaml_split_paths(dst: Path) -> dict[str, str]:
+    present = _present_splits(dst)
     split_paths = {name: f"{name}/images" for name in present}
     first_path = split_paths[present[0]] if present else "train/images"
 
@@ -73,6 +73,7 @@ def attach(p: argparse.ArgumentParser) -> None:
     )
     attach_split_assignment_args(p)
     p.add_argument("--hardlink", action="store_true", help="Hard-link images instead of copying bytes.")
+    attach_overwrite_flag(p)
     attach_with_stats_flag(p)
 
 
@@ -91,13 +92,14 @@ def run(ds, a: argparse.Namespace):
         format="yolo",
         task=_canonical_task(task_arg),
         hardlink=bool(getattr(a, "hardlink", False)),
+        overwrite=bool(getattr(a, "overwrite", False)),
     )
     write_data_yaml(
         a.dst / "data.yaml",
         root=a.dst,
         classes=ds.classes,
         task=_yaml_task_name(ds, task_arg),
-        split_paths=_yaml_split_paths(ds),
+        split_paths=_yaml_split_paths(a.dst),
     )
     if bool(getattr(a, "with_stats", False)):
         ctx = make_export_context(branch="label", command="to-yolo", dst=a.dst)

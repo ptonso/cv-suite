@@ -9,6 +9,7 @@ import argparse
 
 from cvsuite.common.core import VisionDataset
 from cvsuite.common.io import write_dataset
+from cvsuite.common.io.attach import attach_overwrite_flag
 
 from cvsuite.common.stats import attach_with_stats_flag, build_label_stats, emit_stats_yaml, make_export_context
 from cvsuite.label.output.common import assign_output_splits, attach_split_assignment_args
@@ -19,6 +20,7 @@ def attach(p: argparse.ArgumentParser) -> None:
     attach_split_assignment_args(p)
     p.add_argument("--embed-image", action="store_true", help="Store imageData inside JSON instead of copying images.")
     p.add_argument("--hardlink", action="store_true", help="Hard-link images instead of copying bytes.")
+    attach_overwrite_flag(p)
     attach_with_stats_flag(p)
 
 
@@ -42,6 +44,7 @@ def run(ds, a: argparse.Namespace):
         splits=None,
         split_layout=split_layout,
         hardlink=bool(getattr(a, "hardlink", False)),
+        overwrite=bool(getattr(a, "overwrite", False)),
     )
     if bool(getattr(a, "with_stats", False)):
         ctx = make_export_context(branch="label", command="to-labelme", dst=a.dst)

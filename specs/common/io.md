@@ -13,6 +13,8 @@ Branches keep their own public spellings and source-detection rules ([label adap
 - **Adapter**: a class that reads and/or writes one format.
 - **Format id**: the adapter's registered name, listed below.
 - **Auto detection**: choosing a reader by asking each adapter's `matches()`, in priority order.
+- **Claim**: a writer's declaration, before its first write, that it owns a directory or file for this run.
+- **Dirty path**: a claimed path that already holds content, a file or a non-empty directory.
 
 ## Map
 
@@ -26,7 +28,7 @@ Branches keep their own public spellings and source-detection rules ([label adap
 
 ```python
 read_dataset(src, *, format="auto", task="auto", splits=None, **adapter_options) -> VisionDataset
-write_dataset(dataset, dst, *, format, splits=None, **writer_options) -> None
+write_dataset(dataset, dst, *, format, splits=None, overwrite=False, **writer_options) -> None
 register_reader(name, adapter, *, priority=100) -> None
 register_writer(name, adapter) -> None
 list_readers() -> list[str]
@@ -41,7 +43,29 @@ Import the router from `cvsuite.common.io`, never from `cvsuite.common.core`: `i
 
 - `matches(src: Path) -> bool`: cheap on-disk shape check used by auto detection.
 - `read(path, *, task, splits, **opts) -> VisionDataset`
-- `write(dataset, dst, *, splits, **opts) -> None` (writers only)
+- `write(dataset, dst, *, splits, claims, **opts) -> None` (writers only). `claims` is the run's `OutputClaims`. Writers that refuse existing files on their own accept it through `**opts` and ignore it.
+
+### Output claims
+
+`write_dataset` builds one `OutputClaims` per call from `overwrite` and the folders of the dataset's source images, and hands it to the writer. Before its first write into a directory or file, a writer calls `claims.claim(path)`:
+
+- A path that is absent or empty is claimed.
+- A dirty path raises `FileExistsError` naming the path and `--overwrite`.
+- A dirty path with `overwrite=True` is removed, and only that path, then claimed.
+- A path claimed earlier in the same run is a no-op, so several passes over one tree claim it once.
+
+After the claim the path holds only this run's files. Records of one run whose names collide get `_1`, `_2`, and so on within it.
+
+Claimed paths per writer:
+
+| id | claimed paths |
+|---|---|
+| `yolo` | for each split written: `<split>/images`, each `<split>/labels*`, `<split>/labels_vqa` |
+| `labelme` | each split directory written, or `dst` itself in the flat layout |
+| `class-dir` | each class folder written: `<label>`, or `<split>/<label>` |
+| `coco` | default layout: each `<split>` folder. `coco_style`: the shared `images/` folder, claimed whole, and each `annotations/annotations_<split>.json`. `no_images`: only the annotation files |
+
+Content outside the claimed paths is left alone: a split tree or class folder that an earlier run wrote and this run does not write stays on disk. `vqa_style`, `flat_vlm_json`, `shards_vlm` refuse existing files themselves and claim nothing.
 
 ### Built-in formats
 
@@ -63,8 +87,8 @@ Auto detection picks the lowest priority number whose `matches()` is true.
 
 - `flat`: loose image or tree into image-only records. Option `max_depth` (`-1` unlimited).
 - `class-dir`: class-folder classification, single-label and multi-label duplicate-tree layouts. Options `class_name_mode` (`basename` | `full_path`), `max_depth`. Split-prefixed trees and threshold-based winner selection are handled inside.
-- `yolo`: split trees and `data.yaml` for detection, instance segmentation and pose, plus optional `labels_vqa/` sidecars. Reads both the split-first layout (`<root>/<split>/images` + `<root>/<split>/labels*`) and the Ultralytics layout (`<root>/images/<split>` + `<root>/labels*/<split>`). `BBox.kind` (`det`, `seg`, `pose`) carries the box kind. Write option `hardlink`.
-- `coco`: COCO JSON or YAML-driven layouts (`images`, `annotations`, `categories`); detection and instance-segmentation geometry normalized; per-image VQA extras. The writer always targets a directory. Write options `hardlink`, `coco_style`, `no_images`, `overwrite`.
+- `yolo`: split trees and `data.yaml` for detection, instance segmentation and pose, plus optional `labels_vqa/` sidecars. Reads both the split-first layout (`<root>/<split>/images` + `<root>/<split>/labels*`) and the Ultralytics layout (`<root>/images/<split>` + `<root>/labels*/<split>`). `BBox.kind` (`det`, `seg`, `pose`) carries the box kind. Write option `hardlink`. Every task pass over a record uses the image name and label stem that the record received in the first pass, so the det, seg and pose label trees pair by stem.
+- `coco`: COCO JSON or YAML-driven layouts (`images`, `annotations`, `categories`); detection and instance-segmentation geometry normalized; per-image VQA extras. The writer always targets a directory. Write options `hardlink`, `coco_style`, `no_images`.
 - `labelme`: image plus JSON sidecars. Boxes, polygons, keypoints, base64 images, shape flags in `attributes["flags"]`, promoted `prompt` / `model` / `text` fields, full source shapes on `record.labelme_shapes` and `imageData` under `record.round_trip["labelme"]`. Read option `keypoints_file`. Write options `embed_image`, `hardlink`, `split_layout`.
 - `semseg_mask`: semantic-segmentation manifests (`data.yaml` with per-split `images` / `masks` dirs) into records carrying `semantic_mask`. Read-only.
 - `vqa_style`: normalized VQA manifests (`items` plus image paths) and classic raw VQA JSON keyed by `image_id` / `question_id`.
@@ -84,7 +108,13 @@ Auto detection picks the lowest priority number whose `matches()` is true.
 - Adapters MUST read and write only through the shared dataset and MUST NOT receive branch-specific adapters or CLI state.
 - Geometry MUST be normalized in memory; adapters convert to and from format layouts.
 - `coco` writing MUST target a directory.
+- A writer that places files in a destination MUST claim every directory or file it writes before the first write into it, except the writers listed above as refusing existing files themselves.
+- A dirty claimed path MUST raise `FileExistsError` unless `overwrite=True`, and `overwrite=True` MUST remove only that path.
+- A claim with `overwrite=True` MUST raise when the path is, or contains, a folder of a source image of the dataset being written, and when the path is a symbolic link.
+- Within one run, a record MUST keep one image name and one label stem across every task pass of the `yolo` writer.
+- Two `write_dataset` calls into one destination MAY write different splits. A `coco_style` destination MUST be written by one call that carries every split.
 
 ## History
 
 - [Shared dataset contract](../logs/2026-09-20_shared-dataset-contract.md): why format handling is decoupled from the rest of the system.
+- [Idempotent outputs](../logs/2026-11-05_idempotent-outputs.md): why writers claim what they write, and why a rerun raises unless `--overwrite`.

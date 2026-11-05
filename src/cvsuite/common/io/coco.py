@@ -357,7 +357,7 @@ class CocoAdapter:
         *,
         split: str,
         task: str,
-        overwrite: bool,
+        claims: common.OutputClaims,
         coco_style: bool,
         hardlink: bool,
         no_images: bool = False,
@@ -381,18 +381,19 @@ class CocoAdapter:
         if coco_style:
             img_root = dst / "images"
             ann_root = dst / "annotations"
-            ann_root.mkdir(parents=True, exist_ok=True)
             dst_path = ann_root / f"annotations_{split}.json"
         else:
-            split_root = dst / split
-            split_root.mkdir(parents=True, exist_ok=True)
-            img_root = split_root
-            dst_path = split_root / "_annotations.coco.json"
-        if not no_images:
+            img_root = dst / split
+            dst_path = img_root / "_annotations.coco.json"
+        if no_images:
+            claims.claim(dst_path)
+            dst_path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            claims.claim(img_root)
+            if coco_style:
+                claims.claim(dst_path)
+                ann_root.mkdir(parents=True, exist_ok=True)
             img_root.mkdir(parents=True, exist_ok=True)
-
-        if dst_path.exists() and not overwrite:
-            raise FileExistsError(str(dst_path))
 
         split_records = [record for record in dataset.records if record.split == split]
         for img_id, record in enumerate(split_records, start=1):
@@ -454,18 +455,19 @@ class CocoAdapter:
         *,
         splits: list[str] | None = None,
         task: str | None = None,
-        overwrite: bool = False,
         coco_style: bool = False,
         hardlink: bool = False,
         no_images: bool = False,
+        claims: common.OutputClaims | None = None,
         **options: object,
     ) -> None:
+        claims = claims or common.OutputClaims()
         requested = common.canonical_task_id(task or dataset.task or "auto")
         use_task = "inst-seg" if requested == "auto" and any(record.polys for record in dataset.records) else "det" if requested == "auto" else common.canonical_task_id(requested, allow_auto=False)
         split_values = splits or sorted({record.split for record in dataset.records}) or ["train"]
         normalized_splits = [common.canonical_split_id(item) for item in split_values]
         for split in normalized_splits:
             cls._write_one_split(
-                dataset, dst, split=split, task=use_task, overwrite=overwrite,
+                dataset, dst, split=split, task=use_task, claims=claims,
                 coco_style=coco_style, hardlink=hardlink, no_images=no_images,
             )

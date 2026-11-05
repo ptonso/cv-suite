@@ -36,4 +36,4 @@ Transforms like `ground`, `ocr`, `infer`, `caption`, `vqa`, and the `gen` action
 
 ## Determinism
 
-Sampling and split assignment use fixed default seeds. Most writers add a collision suffix rather than overwriting. Re-running the same command generally reproduces the same output.
+Sampling and split assignment use fixed default seeds. Format writers (`to-yolo`, `to-labelme`, `to-coco`, `to-class-dir`) add a suffix when two records of one run collide on a file name, and refuse a destination that an earlier run filled unless you pass `--overwrite`, which replaces the folders the command writes. Re-running the same command with `--overwrite` reproduces the same output.

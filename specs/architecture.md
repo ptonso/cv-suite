@@ -25,7 +25,7 @@ Three layers sit under the branches:
 
 Walk-through of a typical run, `cvsuite label ./data ground ... to-yolo ./out`: the top-level command hands the arguments to the `label` branch; the branch reads `./data` into the shared dataset; the `ground` transformation attaches a model request and the model runtime runs the model in its own process; the model adds boxes to the dataset; `to-yolo` writes the dataset as a YOLO tree. The shared shape of this flow is in [pipeline](pipeline.md).
 
-The tool aims at reproducible results. Sampling and split assignment use fixed default seeds, and outputs add a suffix on filename collisions instead of overwriting by default.
+The tool aims at reproducible results. Sampling and split assignment use fixed default seeds, and format outputs refuse a destination that an earlier run filled unless `--overwrite` is given ([output claims](common/io.md#output-claims)). Filename collisions between records of one run get a suffix instead of overwriting.
 
 For install steps and worked examples see [`../docs/`](../docs/). Specs constrain; guides teach.
 
@@ -100,3 +100,4 @@ Branch help is offline and deterministic. Provider and model catalogs shown in `
 
 - [Branch per domain](logs/2026-09-20_branch-per-domain.md): why the CLI is split by computer-vision domain and why `prep`, `class` and the pipeline branches differ.
 - [Shared dataset contract](logs/2026-09-20_shared-dataset-contract.md): why one in-memory model sits between formats and models.
+- [Idempotent outputs](logs/2026-11-05_idempotent-outputs.md): why a rerun into a dirty destination raises and `--overwrite` replaces what a writer owns.

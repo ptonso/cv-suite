@@ -5,6 +5,7 @@ import argparse
 
 from cvsuite.common.core import VisionDataset
 from cvsuite.common.io import write_dataset
+from cvsuite.common.io.attach import attach_overwrite_flag
 
 from cvsuite.common.core.utils import write_yaml
 from cvsuite.common.stats import attach_with_stats_flag, build_label_stats, emit_stats_yaml, make_export_context
@@ -17,7 +18,18 @@ def attach(p: argparse.ArgumentParser) -> None:
     p.add_argument("--coco-style", action="store_true", help="Write images/ + annotations/annotations_<split>.json layout.")
     p.add_argument("--no-images", action="store_true", help="Write annotations + data.yaml only; do not copy image files.")
     p.add_argument("--hardlink", action="store_true", help="Hard-link images instead of copying bytes.")
+    attach_overwrite_flag(p)
     attach_with_stats_flag(p)
+
+
+def _annotation_paths(dst: Path, coco_style: bool) -> dict[str, Path]:
+    """Annotation files on disk, whichever invocation wrote them: train, val, test, then the rest."""
+    preferred = ("train", "val", "test")
+    if coco_style:
+        found = {p.stem.removeprefix("annotations_"): p for p in (dst / "annotations").glob("annotations_*.json")}
+    else:
+        found = {p.parent.name: p for p in dst.glob("*/_annotations.coco.json")}
+    return {name: found[name] for name in [*(n for n in preferred if n in found), *sorted(set(found) - set(preferred))]}
 
 
 def run(ds, a: argparse.Namespace):
@@ -37,23 +49,17 @@ def run(ds, a: argparse.Namespace):
     dst.mkdir(parents=True, exist_ok=True)
     coco_style = bool(getattr(a, "coco_style", False))
     no_images = bool(getattr(a, "no_images", False))
-    ann_paths: dict[str, Path] = {}
-
-    for sp in splits:
-        write_dataset(
-            ds,
-            dst,
-            format="coco",
-            splits=[sp],
-            overwrite=False,
-            coco_style=coco_style,
-            hardlink=bool(getattr(a, "hardlink", False)),
-            no_images=no_images,
-        )
-        if coco_style:
-            ann_paths[sp] = dst / "annotations" / f"annotations_{sp}.json"
-        else:
-            ann_paths[sp] = dst / sp / "_annotations.coco.json"
+    write_dataset(
+        ds,
+        dst,
+        format="coco",
+        splits=splits,
+        overwrite=bool(getattr(a, "overwrite", False)),
+        coco_style=coco_style,
+        hardlink=bool(getattr(a, "hardlink", False)),
+        no_images=no_images,
+    )
+    ann_paths = _annotation_paths(dst, coco_style)
 
     # Emit a helper data.yaml for organization (format: coco)
     data_obj = {

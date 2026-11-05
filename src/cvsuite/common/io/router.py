@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from cvsuite.common.core import VisionDataset
+from cvsuite.common.io import common
 
 # Runtime registries keyed by the public format id, 
 # for example `yolo` or `labelme`.
@@ -156,11 +157,17 @@ def write_dataset(
     *,
     format: str,
     splits: list[str] | None = None,
+    overwrite: bool = False,
     **writer_options: Any,
 ) -> None:
-    """Write a canonical dataset through one named format adapter."""
+    """Write a canonical dataset through one named format adapter.
+
+    The writer receives an `OutputClaims` as `claims` and claims each directory or file it writes
+    (`specs/common/io.md`). A claimed path that already holds content raises unless `overwrite` is true.
+    """
     _ensure_builtins_registered()
     if format not in _WRITERS:
         raise KeyError(f"Unknown or unsupported writer format: {format}")
     writer = _WRITERS[format]
-    writer.write(dataset, Path(dst), splits=splits, **writer_options)
+    claims = common.OutputClaims.for_dataset(dataset, overwrite=overwrite)
+    writer.write(dataset, Path(dst), splits=splits, claims=claims, **writer_options)

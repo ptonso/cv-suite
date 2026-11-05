@@ -181,6 +181,42 @@ def copy_or_link(src: Path, dst: Path, *, hardlink: bool = False) -> None:
     shutil.copy2(src, dst)
 
 
+class OutputClaims:
+    """The directories and files one writer run owns, claimed before the first write into them.
+
+    A claimed path that already holds content raises, or with `overwrite` is removed, and only that path.
+    After the claim the path holds only this run's files, so suffixing a colliding name (`stem_1`) resolves
+    collisions between records of the same run. Claim leaf paths: claiming a directory after claiming one
+    inside it would delete the files just written.
+    """
+
+    def __init__(self, overwrite: bool = False, source_dirs: Iterable[str | Path] = ()) -> None:
+        self.overwrite = overwrite
+        self._source_dirs = frozenset(os.path.abspath(item) for item in source_dirs)
+        self._claimed: set[str] = set()
+
+    @classmethod
+    def for_dataset(cls, dataset: VisionDataset, overwrite: bool = False) -> "OutputClaims":
+        return cls(overwrite, {resolve_record_image_path(dataset, r).parent for r in dataset.records if r.image is not None})
+
+    def claim(self, path: Path) -> Path:
+        key = os.path.abspath(path)
+        if key in self._claimed or any(key.startswith(owned + os.sep) for owned in self._claimed):
+            return path
+        if any(owned.startswith(key + os.sep) for owned in self._claimed):
+            raise RuntimeError(f"Cannot claim {path}: a path inside it was claimed earlier in this run.")
+        if path.exists() and (path.is_file() or any(path.iterdir())):
+            if not self.overwrite:
+                raise FileExistsError(f"{path} already holds output; pass --overwrite to replace it.")
+            if path.is_symlink():
+                raise ValueError(f"Refusing to overwrite through the symbolic link {path}.")
+            if any(item == key or item.startswith(key + os.sep) for item in self._source_dirs):
+                raise ValueError(f"Refusing to overwrite {path}: it is or contains a folder of the source images.")
+            shutil.rmtree(path) if path.is_dir() else path.unlink()
+        self._claimed.add(key)
+        return path
+
+
 def read_image_bytes(dataset: VisionDataset, record: VisionRecord, *, force_jpeg: bool = False) -> tuple[bytes, str]:
     src = resolve_record_image_path(dataset, record)
     suffix = src.suffix.lower() or ".jpg"

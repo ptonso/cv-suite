@@ -159,12 +159,12 @@ def _locate_split_tree(root: Path, split: str, task: str, default_task: str | No
     return {"images": img_dir, "labels": lbl_dir, "vqa": _vqa_dir_from_images(img_dir)}
 
 
-def _ensure_split_tree(root: Path, split: str, task: str, *, include_vqa: bool, default_task: str | None = None) -> dict[str, Path]:
+def _ensure_split_tree(
+    root: Path, split: str, task: str, *, include_vqa: bool, claims: common.OutputClaims, default_task: str | None = None
+) -> dict[str, Path]:
     tree = _locate_split_tree(root, split, task, default_task=default_task)
-    tree["images"].mkdir(parents=True, exist_ok=True)
-    tree["labels"].mkdir(parents=True, exist_ok=True)
-    if include_vqa:
-        tree["vqa"].mkdir(parents=True, exist_ok=True)
+    for key in ("images", "labels", *(("vqa",) if include_vqa else ())):
+        claims.claim(tree[key]).mkdir(parents=True, exist_ok=True)
     return tree
 
 
@@ -586,20 +586,19 @@ class YoloAdapter:
         *,
         task: str,
         hardlink: bool,
-        allow_existing_images: bool,
+        name: tuple[str, str] | None,
         write_vqa: bool,
         dataset: VisionDataset,
-    ) -> None:
+    ) -> tuple[str, str]:
+        """Write one record's image and labels, and return its (image file name, label stem).
+
+        `name` is the pair the record received in the first task pass, so every task's label tree pairs by stem.
+        """
         src = common.resolve_record_image_path(dataset, record)
-        base_img = tree["images"] / src.name
-        base_lbl = tree["labels"] / f"{src.stem}.txt"
-        if allow_existing_images and base_img.exists():
-            img_dst = base_img
-            lbl_dst = base_lbl
-            if lbl_dst.exists():
-                img_dst, lbl_dst = _unique_image_and_label(tree["images"], tree["labels"], src.stem, src.suffix)
-        else:
+        if name is None:
             img_dst, lbl_dst = _unique_image_and_label(tree["images"], tree["labels"], src.stem, src.suffix)
+        else:
+            img_dst, lbl_dst = tree["images"] / name[0], tree["labels"] / f"{name[1]}.txt"
 
         if not img_dst.exists():
             if src.suffix.lower() not in common.IMG_EXTS:
@@ -629,6 +628,7 @@ class YoloAdapter:
         lbl_dst.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
         if write_vqa and record.vqas:
             _write_vqas(tree["vqa"] / f"{img_dst.stem}.txt", record.vqas)
+        return img_dst.name, lbl_dst.stem
 
     @classmethod
     def write(
@@ -639,28 +639,33 @@ class YoloAdapter:
         splits: list[str] | None = None,
         task: str | None = None,
         hardlink: bool = False,
+        claims: common.OutputClaims | None = None,
         **options: object,
     ) -> None:
+        claims = claims or common.OutputClaims()
         dst.mkdir(parents=True, exist_ok=True)
         target_splits = {common.canonical_split_id(item) for item in splits} if splits else None
         has_vqa = cls._dataset_has_vqa(dataset, target_splits)
         tasks = cls._detect_tasks(dataset)
         default_task = cls._resolve_default_label_task(tasks, dataset.task, task)
         first = True
+        names: dict[int, tuple[str, str]] = {}
         for current_task in tasks:
             cache: dict[str, dict[str, Path]] = {}
-            for record in dataset.records:
+            for index, record in enumerate(dataset.records):
                 split = record.split or "train"
                 if target_splits and split not in target_splits:
                     continue
                 if split not in cache:
-                    cache[split] = _ensure_split_tree(dst, split, current_task, include_vqa=has_vqa and first, default_task=default_task)
-                cls._write_item(
+                    cache[split] = _ensure_split_tree(
+                        dst, split, current_task, include_vqa=has_vqa and first, claims=claims, default_task=default_task
+                    )
+                names[index] = cls._write_item(
                     record,
                     cache[split],
                     task=current_task,
                     hardlink=hardlink,
-                    allow_existing_images=not first,
+                    name=names.get(index),
                     write_vqa=first,
                     dataset=dataset,
                 )

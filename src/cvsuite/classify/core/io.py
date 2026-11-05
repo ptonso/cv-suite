@@ -602,6 +602,7 @@ def write_class_dir(
     multi_class: bool = False,
     preserve_splits: bool = False,
     exclude_classes: Iterable[str] | None = None,
+    overwrite: bool = False,
 ) -> VisionDataset:
     dataset = prune_excluded_classes(dataset, exclude_classes)
     multi_class = resolve_output_multi_class(dataset, requested=multi_class)
@@ -629,6 +630,7 @@ def write_class_dir(
         unlabeled_name=unlabeled_name,
         multi_label=multi_class,
         preserve_splits=split_output,
+        overwrite=overwrite,
     )
     return dataset
 
