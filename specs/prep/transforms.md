@@ -47,7 +47,7 @@ The four `prep` commands do the real work of the branch: `arrange` normalizes fo
 
 ### sample
 
-One or more `srcs`, `dst`, `--count` or `--frac`, `--seed` (default `0`), `--hardlink`, `--dry-run`, `-v/--verbose`. All sources are pooled before sampling and the output is flat. Selection follows [nested sampling](../common/sampling.md): a file's key is its source index and its path relative to that source, so a smaller `--frac` selects a subset of what a larger one selects. `prep` keeps `--hardlink` and its other link flags, because it works on files.
+One or more `srcs`, `dst`, `--count` or `--frac`, `--seed` (default `0`), `--link-mode {copy,hard}` (default `copy`), `--dry-run`, `-v/--verbose`. All sources are pooled before sampling and the output is flat. Selection follows [nested sampling](../common/sampling.md): a file's key is its source index and its path relative to that source, so a smaller `--frac` selects a subset of what a larger one selects. `prep` keeps its own link modes (`copy`, `move`, `hard`, with `sample` taking `copy` and `hard`), because it works on files and has no `sym`.
 
 ## Constraints
 

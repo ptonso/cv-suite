@@ -23,7 +23,7 @@ cvsuite prep process ./clean \
 # pool several folders and sample a flat set
 cvsuite prep sample ./a ./b ./c \
     --count 300 \
-    --hardlink \
+    --link-mode hard \
     ./sampled
 ```
 

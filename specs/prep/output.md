@@ -48,4 +48,4 @@ It is written under `dst/<dst_subdir>/` when `--dst-subdir` is set, else under `
 - `process --transfer move` MUST delete the source image only after the output write succeeds.
 - If OpenCV is unavailable, video sampling in `process` MUST log an error and yield no frames instead of failing the command.
 - `orient` rewrites MUST preserve, as far as PIL allows: EXIF orientation normalized to `1`, ICC profile, dpi, xmp, and JPEG quality and subsampling `"keep"`. Stat metadata MUST be copied from the source after rewrite. Unchanged images MAY remain byte-identical via hardlink or copy.
-- `sample --hardlink` MUST create inode-sharing outputs when the filesystem allows it.
+- `sample --link-mode hard` MUST create inode-sharing outputs when the filesystem allows it.

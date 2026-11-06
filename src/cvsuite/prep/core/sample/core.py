@@ -123,10 +123,9 @@ def run_sample_core(config: SampleConfig) -> None:
 
     used_names: set[str] = set()
     actions: list[Action] = []
-    kind = "link" if config.hardlink else "copy"
-    link_mode = "hard" if config.hardlink else "copy"
+    kind = "link" if config.link_mode == "hard" else "copy"
     for entry in selected:
         dst = _next_flat_dst(config.dst, used_names, entry.name)
         actions.append(Action(kind=kind, src=entry.src, dst=dst, reason=None))
 
-    apply_actions(actions, link_mode, config.dry_run, logger)
+    apply_actions(actions, config.link_mode, config.dry_run, logger)

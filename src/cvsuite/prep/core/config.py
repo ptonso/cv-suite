@@ -75,7 +75,7 @@ class SampleConfig:
     dst: Path
     count: Optional[int]
     frac: Optional[float]
-    hardlink: bool
+    link_mode: LinkMode
     seed: int
     dry_run: bool
     verbose: int

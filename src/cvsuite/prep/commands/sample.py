@@ -28,7 +28,7 @@ def run_sample(args: argparse.Namespace) -> None:
         dst=args.dst,
         count=count,
         frac=frac,
-        hardlink=bool(args.hardlink),
+        link_mode=args.link_mode,
         seed=args.seed,
         dry_run=bool(args.dry_run),
         verbose=verbose,
@@ -68,9 +68,10 @@ def register_subcommand(subparsers: argparse._SubParsersAction[argparse.Argument
         help="Seed of the sampling rank (default 0). A smaller sample is a subset of a larger one for one seed.",
     )
     parser.add_argument(
-        "--hardlink",
-        action="store_true",
-        help="Hard-link sampled images instead of copying bytes.",
+        "--link-mode",
+        choices=("copy", "hard"),
+        default="copy",
+        help="How sampled images reach the destination: copy bytes (default) or hard link.",
     )
     parser.add_argument(
         "--dry-run",

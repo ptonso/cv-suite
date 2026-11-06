@@ -105,7 +105,7 @@ def test_prep_sample_hardlinks_when_requested(tmp_path: Path) -> None:
     original = src / "a.jpg"
     _write_image(original, color=(255, 0, 0))
 
-    exit_code = prep_cli.main(["sample", str(src), str(dst), "--count", "1", "--hardlink"])
+    exit_code = prep_cli.main(["sample", str(src), str(dst), "--count", "1", "--link-mode", "hard"])
 
     sampled = dst / "a.jpg"
     assert exit_code == 0
