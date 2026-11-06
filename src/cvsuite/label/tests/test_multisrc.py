@@ -83,9 +83,14 @@ def test_label_cli_accepts_multiple_sources_before_transform(tmp_path: Path) -> 
         [
             str(lights),
             str(valves),
-            "to-labelme",
+            "split",
             "--val-frac",
-            "1.0",
+            "0.5",
+            "--stratify-by",
+            "none",
+            "--tolerance",
+            "1",
+            "to-labelme",
             str(dst),
         ]
     )
@@ -93,12 +98,14 @@ def test_label_cli_accepts_multiple_sources_before_transform(tmp_path: Path) -> 
     assert exit_code == 0
     dataset = router.ingest_many([lights, valves])
     assert dataset.meta["sources"] == [str(lights), str(valves)]
-    assert len(list((dst / "val").glob("*.json"))) == 2
+    assert len(list((dst / "val").glob("*.json"))) == 1
+    assert len(list((dst / "train").glob("*.json"))) == 1
 
 
-def test_to_yolo_assigns_output_splits(tmp_path: Path) -> None:
+def test_to_yolo_writes_the_splits_the_records_carry(tmp_path: Path) -> None:
     src = _write_yolo_dataset(tmp_path / "source", cls_name="light", stem="light_a")
     ds = router.ingest(src, from_hint="yolo")
+    ds.records[0].split = "val"
     dst = tmp_path / "out"
 
     args = type(
@@ -107,10 +114,6 @@ def test_to_yolo_assigns_output_splits(tmp_path: Path) -> None:
         dict(
             dst=dst,
             task="det",
-            val_frac=1.0,
-            test_frac=0.0,
-            seed=0,
-            hardlink=False,
         ),
     )
 
@@ -124,10 +127,10 @@ def test_to_yolo_assigns_output_splits(tmp_path: Path) -> None:
     assert "test" not in data
 
 
-def test_to_yolo_defaults_to_train_only_output(tmp_path: Path) -> None:
+def test_to_yolo_writes_train_only_output_for_train_only_records(tmp_path: Path) -> None:
     src = _write_yolo_dataset(tmp_path / "source_default", cls_name="light", stem="light_b")
     ds = router.ingest(src, from_hint="yolo")
-    ds.records[0].split = "val"
+    ds.records[0].split = "train"
     dst = tmp_path / "out_default"
 
     args = type(
@@ -136,10 +139,6 @@ def test_to_yolo_defaults_to_train_only_output(tmp_path: Path) -> None:
         dict(
             dst=dst,
             task="det",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
-            hardlink=False,
         ),
     )
 
@@ -154,10 +153,10 @@ def test_to_yolo_defaults_to_train_only_output(tmp_path: Path) -> None:
     assert "test" not in data
 
 
-def test_to_labelme_defaults_to_flat_train_only_output(tmp_path: Path) -> None:
+def test_to_labelme_writes_flat_output_for_train_only_records(tmp_path: Path) -> None:
     src = _write_yolo_dataset(tmp_path / "source_labelme_default", cls_name="light", stem="light_flat")
     ds = router.ingest(src, from_hint="yolo")
-    ds.records[0].split = "val"
+    ds.records[0].split = "train"
     dst = tmp_path / "labelme_flat"
 
     cmd_to_labelme.run(
@@ -165,7 +164,7 @@ def test_to_labelme_defaults_to_flat_train_only_output(tmp_path: Path) -> None:
         type(
             "Args",
             (),
-            dict(dst=dst, val_frac=0.0, test_frac=0.0, seed=0, embed_image=False, hardlink=False),
+            dict(dst=dst, embed_image=False),
         ),
     )
 
@@ -175,7 +174,7 @@ def test_to_labelme_defaults_to_flat_train_only_output(tmp_path: Path) -> None:
     assert router.ingest(dst, from_hint="labelme").records[0].split == "train"
 
 
-def test_to_labelme_preserve_splits_uses_split_dirs(tmp_path: Path) -> None:
+def test_to_labelme_writes_split_dirs_for_non_train_records(tmp_path: Path) -> None:
     train_img = tmp_path / "train_img.jpg"
     val_img = tmp_path / "val_img.jpg"
     _write_image(train_img, color=(255, 255, 255))
@@ -196,12 +195,7 @@ def test_to_labelme_preserve_splits_uses_split_dirs(tmp_path: Path) -> None:
             (),
             dict(
                 dst=dst,
-                val_frac=0.0,
-                test_frac=0.0,
-                seed=0,
-                preserve_splits=True,
                 embed_image=False,
-                hardlink=False,
             ),
         ),
     )
@@ -223,10 +217,6 @@ def test_to_yolo_writes_data_yaml_for_image_only_dataset(tmp_path: Path) -> None
         dict(
             dst=dst,
             task="auto",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
-            hardlink=False,
         ),
     )
 
@@ -250,10 +240,6 @@ def test_to_yolo_skips_labels_vqa_when_dataset_has_no_vqa(tmp_path: Path) -> Non
         dict(
             dst=dst,
             task="det",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
-            hardlink=False,
         ),
     )
 
@@ -266,6 +252,7 @@ def test_to_yolo_creates_labels_vqa_when_any_output_split_has_vqa(tmp_path: Path
     src = _write_yolo_dataset(tmp_path / "source_with_vqa", cls_name="light", stem="light_d")
     ds = router.ingest(src, from_hint="yolo")
     ds.records[0].vqas = [VQA(question="What is shown?", answer="A light")]
+    ds.records[0].split = "val"
     dst = tmp_path / "out_with_vqa"
 
     args = type(
@@ -274,10 +261,6 @@ def test_to_yolo_creates_labels_vqa_when_any_output_split_has_vqa(tmp_path: Path
         dict(
             dst=dst,
             task="det",
-            val_frac=1.0,
-            test_frac=0.0,
-            seed=0,
-            hardlink=False,
         ),
     )
 
@@ -298,10 +281,6 @@ def test_to_yolo_auto_uses_det_as_plain_labels_when_multiple_tasks_exist(tmp_pat
         dict(
             dst=dst,
             task="auto",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
-            hardlink=False,
         ),
     )
 
@@ -328,10 +307,6 @@ def test_to_yolo_explicit_task_uses_plain_labels_and_preserves_other_tasks(tmp_p
         dict(
             dst=dst,
             task="seg",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
-            hardlink=False,
         ),
     )
 

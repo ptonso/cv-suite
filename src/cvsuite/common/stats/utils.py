@@ -133,6 +133,7 @@ def base_stats_document(dataset: VisionDataset, ctx: ExportStatsContext) -> dict
         "branch": ctx.branch,
         "command": ctx.command,
         "output": output,
+        "steps": list(dataset.meta.get("steps", [])),
         "dataset": {
             "records": len(dataset.records),
             "splits": records_by_split(dataset),

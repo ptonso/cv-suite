@@ -6,9 +6,11 @@ import argparse
 import importlib
 import pkgutil
 import sys
+from functools import partial
 from pathlib import Path
 
-from ..branch_cli import apply_transform_output_hints, build_parser, parse_help, result_to_exit_code, split_rest
+from ..branch_cli import build_parser, parse_help, result_to_exit_code, run_chain, split_rest
+from ..common.io.common import remove_dirs
 from .core import io
 
 OUTPUT_PKG = f"{__package__}.output.commands"
@@ -43,12 +45,16 @@ TRANSFORM_COMMANDS = _iter_transform_commands()
 def _print_usage() -> None:
     commands = ", ".join(sorted(COMMANDS)) or "none"
     transforms = ", ".join(sorted(TRANSFORM_COMMANDS)) or "none"
-    print(f"usage: {PROG} <src> [ingest opts] [<transform> <transform args>] <command> [args]")
+    print(f"usage: {PROG} <src> [ingest opts] [<transform> <transform args>]... <command> [args]")
     print("ingest opts:")
     print("  --from {auto,images,unstructured,multi-class}")
     print("formats: auto, images, unstructured, multi-class")
     print(f"output commands: {commands}")
     print(f"transforms: {transforms}")
+
+
+def _transform_module(name: str):
+    return importlib.import_module(f"{TRANSFORMS_PKG}.{TRANSFORM_COMMANDS[name]}")
 
 
 def _dispatch_help(argv: list[str]) -> int:
@@ -81,38 +87,28 @@ def main(argv: list[str] | None = None) -> int:
         _print_usage()
         return 1
 
-    transform_name, transform_args, command_name, command_args = split_rest(rest, COMMANDS, TRANSFORM_COMMANDS)
-    if not command_name or command_name not in COMMANDS:
+    transforms = {name: partial(_transform_module, name) for name in TRANSFORM_COMMANDS}
+    steps, command_name, command_args = split_rest(rest, transforms, COMMANDS, prog=PROG)
+    if command_name is None:
         _print_usage()
-        raise SystemExit(f"Unknown command: {command_name!r}" if command_name else "Missing output command.")
+        raise SystemExit("Missing output command.")
 
     command_module = importlib.import_module(f"{OUTPUT_PKG}.{COMMANDS[command_name]}")
-    command_parser = build_parser(command_module, prog=f"{PROG} {command_name}")
-    if any(token in {"-h", "--help"} for token in command_args):
-        parse_help(command_parser, command_args)
-        return 0
-    parsed_command = command_parser.parse_args(command_args)
+    parsed_command = build_parser(command_module, prog=f"{PROG} {command_name}").parse_args(command_args)
 
     source_path = Path(parsed.src)
-    if transform_name == "sample" and io.looks_like_annotated_dataset(source_path):
+    if any(step.name == "sample" for step in steps) and io.looks_like_annotated_dataset(source_path):
         raise SystemExit("For labeled datasets, use `cvsuite label sample` instead.")
+    for step in steps:
+        setattr(step.args, "source_path", source_path)
 
-    dataset = io.ingest(source_path, from_hint=parsed.from_fmt)
-
-    if transform_name:
-        mod_name = TRANSFORM_COMMANDS[transform_name]
-        transform_module = importlib.import_module(f"{TRANSFORMS_PKG}.{mod_name}")
-        transform_parser = build_parser(transform_module, prog=f"{PROG} {transform_name}")
-        if any(token in {"-h", "--help"} for token in transform_args):
-            parse_help(transform_parser, transform_args)
-            return 0
-        parsed_transform = transform_parser.parse_args(transform_args)
-        setattr(parsed_transform, "source_path", source_path)
-        apply_transform_output_hints(PROG, transform_name, parsed_transform, command_name, parsed_command)
-        dataset = transform_module.run(dataset, parsed_transform)
-
-    result = command_module.run(dataset, parsed_command)
-    return result_to_exit_code(result)
+    cleanup: list[str] = []
+    try:
+        dataset = io.ingest(source_path, from_hint=parsed.from_fmt)
+        dataset = run_chain(dataset, steps, cleanup=cleanup)
+        return result_to_exit_code(command_module.run(dataset, parsed_command))
+    finally:
+        remove_dirs(cleanup)
 
 
 if __name__ == "__main__":

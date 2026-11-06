@@ -8,7 +8,7 @@ import cv2
 from cvsuite.common.core import VisionDataset
 from cvsuite.common.stats import attach_with_stats_flag, build_label_stats, emit_stats_yaml, make_export_context
 from cvsuite.label.core.annotate import render_overlay, detection_crops, class_masks, keypoint_overlay, select_indices
-from cvsuite.label.output.common import assign_output_splits, attach_split_assignment_args
+from cvsuite.common.io.folds import require_single_fold
 
 
 def attach(p: argparse.ArgumentParser) -> None:
@@ -17,7 +17,6 @@ def attach(p: argparse.ArgumentParser) -> None:
                    help="Controls labels on annotated overlays.")
     p.add_argument("--imgsz", type=int, default=None, help="Optional square resize before exporting.")
     p.add_argument("--max", type=int, default=0, help="Maximum number of items to export (evenly spaced).")
-    attach_split_assignment_args(p)
     p.add_argument("--skip-annotated", action="store_true", help="Do not write annotated overlays.")
     p.add_argument("--skip-crops", action="store_true", help="Do not write detection crops.")
     p.add_argument("--skip-masks", action="store_true", help="Do not write segmentation masks.")
@@ -31,13 +30,7 @@ def _write_image(path: Path, img) -> None:
 
 
 def run(ds, a: argparse.Namespace):
-    if not bool(getattr(a, "preserve_splits", False)):
-        ds = assign_output_splits(
-            ds,
-            val_frac=getattr(a, "val_frac", 0.0),
-            test_frac=getattr(a, "test_frac", 0.0),
-            seed=getattr(a, "seed", 0),
-        )
+    ds = require_single_fold(ds)
     records = list(ds.records)
     idxs = select_indices(len(records), a.max) if records else []
     selected = [records[i] for i in idxs] if idxs else records

@@ -712,7 +712,7 @@ def test_roundtrip_writers_keep_vqa_fields(tmp_path: Path) -> None:
     dataset = router.ingest(root)
 
     manifest_out = tmp_path / "manifest"
-    VQAStyleIO.write(dataset, manifest_out, hardlink=False)
+    VQAStyleIO.write(dataset, manifest_out)
     manifest_dataset = VQAStyleIO.ingest(manifest_out)
     manifest_qa = manifest_dataset.records[0].vqas[0]
     assert manifest_qa.answer == "red"
@@ -726,7 +726,7 @@ def test_roundtrip_writers_keep_vqa_fields(tmp_path: Path) -> None:
     assert shard_qa.meta["expected_answers"] == ["red"]
 
     flat_out = tmp_path / "flat_out"
-    FlatJsonIO.write(dataset, flat_out, hardlink=False)
+    FlatJsonIO.write(dataset, flat_out)
     flat_dataset = FlatJsonIO.ingest(flat_out)
     flat_qa = flat_dataset.records[0].vqas[0]
     assert flat_qa.answer == "red"

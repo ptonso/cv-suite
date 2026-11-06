@@ -34,7 +34,7 @@ Registries are discovered from `gen/transform/commands/*.py` and `gen/output/com
 
 - The branch MUST NOT use argparse subparsers, so prompts and later tokens cannot interfere with action/output splitting.
 - A prompt string equal to an output command name MUST remain a valid prompt, because actions are parsed before the output is finalized.
-- `_split_output` MUST stay local to `gen/cli.py`: the two-stage split differs from the three-stage `split_rest`. `split_rest` and `apply_transform_output_hints` MUST NOT be used here.
+- `_split_output` MUST stay local to `gen/cli.py`: the two-stage split differs from the three-stage `split_rest`. `split_rest` MUST NOT be used here.
 - An output command MUST be present. When missing, usage is printed with "Missing output command."; when unrecognized, the message names the token.
 - `edit` MUST reuse label-style ingest for structured sources; `create` MUST NOT require a source.
 

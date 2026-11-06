@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
-import os
-import random
 import re
 from dataclasses import replace
 from pathlib import Path
@@ -173,7 +170,7 @@ def _ingest_multi_class(src: Path) -> VisionDataset:
     if not src.is_dir():
         raise SystemExit("`cvsuite class --from multi-class` expects a directory tree rooted at class folders.")
 
-    root = src
+    root = src = src.resolve()
     grouped_paths: dict[str, list[Path]] = {}
     grouped_labels: dict[str, set[str]] = {}
     classes: list[str] = []
@@ -446,76 +443,6 @@ def effective_class_labels(
     ]
 
 
-def validate_split_fractions(*, val_frac: float = 0.0, test_frac: float = 0.0) -> tuple[float, float]:
-    val_frac = float(val_frac or 0.0)
-    test_frac = float(test_frac or 0.0)
-    if val_frac < 0 or test_frac < 0:
-        raise ValueError("Split fractions must be non-negative.")
-    if val_frac > 1 or test_frac > 1 or (val_frac + test_frac) > 1:
-        raise ValueError("Split fractions must satisfy val_frac + test_frac <= 1.0.")
-    return val_frac, test_frac
-
-
-def _split_flags(count: int, *, val_frac: float, test_frac: float) -> list[str]:
-    test_n = int(math.floor(count * test_frac))
-    val_n = int(math.floor(count * val_frac))
-    train_n = max(0, count - test_n - val_n)
-    return (["test"] * test_n) + (["val"] * val_n) + (["train"] * train_n)
-
-
-def assign_output_splits(
-    dataset: VisionDataset,
-    *,
-    threshold: float | None = None,
-    unlabeled_name: str = "unlabeled",
-    class_thresholds: Dict[str, float] | None = None,
-    val_frac: float = 0.0,
-    test_frac: float = 0.0,
-    seed: int = 0,
-    randomized: bool = False,
-) -> VisionDataset:
-    val_frac, test_frac = validate_split_fractions(val_frac=val_frac, test_frac=test_frac)
-    rng = random.Random(seed)
-
-    split_by_index: Dict[int, str] = {}
-    if randomized:
-        indices = list(range(len(dataset.records)))
-        rng.shuffle(indices)
-        flags = _split_flags(len(indices), val_frac=val_frac, test_frac=test_frac)
-        split_by_index.update(zip(indices, flags))
-    else:
-        by_label: Dict[str, List[int]] = {}
-        for idx, record in enumerate(dataset.records):
-            label = effective_class_label(
-                record,
-                threshold=threshold,
-                unlabeled_name=unlabeled_name,
-                class_thresholds=class_thresholds,
-            )
-            by_label.setdefault(label, []).append(idx)
-        for label in sorted(by_label):
-            indices = by_label[label]
-            rng.shuffle(indices)
-            flags = _split_flags(len(indices), val_frac=val_frac, test_frac=test_frac)
-            split_by_index.update(zip(indices, flags))
-
-    records = [
-        replace(record, split=split_by_index.get(idx, "train"))
-        for idx, record in enumerate(dataset.records)
-    ]
-    meta = dict(dataset.meta)
-    meta["output_split_assignment"] = {
-        "val_frac": val_frac,
-        "test_frac": test_frac,
-        "seed": seed,
-        "randomized": randomized,
-        "threshold": threshold,
-        "unlabeled_name": unlabeled_name,
-        "class_thresholds": dict(class_thresholds or {}),
-    }
-    return replace(dataset, records=records, meta=meta)
-
-
 def _strip_excluded_from_record(record: Record, excluded: Set[str]) -> Record | None:
     """Drop excluded class names from a record; return None when nothing is left to write."""
     attrs = dict(record.attributes)
@@ -593,47 +520,27 @@ def write_class_dir(
     *,
     threshold: float | None = None,
     class_thresholds: Dict[str, float] | None = None,
-    hardlink: bool = False,
+    link_mode: str = "copy",
     unlabeled_name: str = "unlabeled",
-    val_frac: float = 0.0,
-    test_frac: float = 0.0,
-    seed: int = 0,
-    randomized: bool = False,
     multi_class: bool = False,
-    preserve_splits: bool = False,
     exclude_classes: Iterable[str] | None = None,
     overwrite: bool = False,
 ) -> VisionDataset:
     dataset = prune_excluded_classes(dataset, exclude_classes)
     multi_class = resolve_output_multi_class(dataset, requested=multi_class)
-    split_output = bool(preserve_splits or val_frac or test_frac)
-    if not preserve_splits:
-        val_frac, test_frac = validate_split_fractions(val_frac=val_frac, test_frac=test_frac)
-    if split_output and not preserve_splits:
-        dataset = assign_output_splits(
-            dataset,
-            threshold=threshold,
-            unlabeled_name=unlabeled_name,
-            class_thresholds=class_thresholds,
-            val_frac=val_frac,
-            test_frac=test_frac,
-            seed=seed,
-            randomized=randomized,
-        )
     write_dataset(
         dataset,
         dst,
         format="class-dir",
         threshold=threshold,
         class_thresholds=class_thresholds,
-        hardlink=hardlink,
+        link_mode=link_mode,
         unlabeled_name=unlabeled_name,
         multi_label=multi_class,
-        preserve_splits=split_output,
         overwrite=overwrite,
     )
     return dataset
 
 
-def write_classified(dataset: VisionDataset, dst: Path, hardlink: bool = False, unlabeled_name: str = "unlabeled") -> None:
-    write_class_dir(dataset, dst, hardlink=hardlink, unlabeled_name=unlabeled_name)
+def write_classified(dataset: VisionDataset, dst: Path, link_mode: str = "copy", unlabeled_name: str = "unlabeled") -> None:
+    write_class_dir(dataset, dst, link_mode=link_mode, unlabeled_name=unlabeled_name)

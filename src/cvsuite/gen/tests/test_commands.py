@@ -915,7 +915,7 @@ def test_to_dst_writes_multiple_generated_records_to_file_stem_directory(tmp_pat
     assert dataset.records[1].image.path == Path("0001__beta.png")
 
 
-def test_to_dst_edit_exports_one_hardlinked_original_per_source(tmp_path: Path) -> None:
+def test_to_dst_edit_exports_one_original_per_source_by_link_mode(tmp_path: Path) -> None:
     source = _write_image(tmp_path / "inputs" / "source.jpg", color=(255, 255, 0))
     one = _write_image(tmp_path / "runner" / "one.png", color=(0, 255, 0))
     two = _write_image(tmp_path / "runner" / "two.png", color=(0, 0, 255))
@@ -945,7 +945,7 @@ def test_to_dst_edit_exports_one_hardlinked_original_per_source(tmp_path: Path) 
     )
 
     out_dir = tmp_path / "exports"
-    to_dst.run(dataset, types.SimpleNamespace(dst=out_dir, with_stats=False))
+    to_dst.run(dataset, types.SimpleNamespace(dst=out_dir, with_stats=False, link_mode="hard"))
 
     original = out_dir / "0000_source.jpg"
     assert original.exists()

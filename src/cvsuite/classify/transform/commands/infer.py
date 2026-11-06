@@ -6,6 +6,8 @@ import argparse
 
 from ..core import infer as infer_core
 
+FM = True
+
 
 def attach(parser: argparse.ArgumentParser) -> None:
     infer_core.attach(parser)

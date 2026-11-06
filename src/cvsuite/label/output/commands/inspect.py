@@ -2,6 +2,7 @@
 
 import argparse
 
+from cvsuite.common.io.folds import require_single_fold
 from cvsuite.label.core.annotate import run_preview
 
 
@@ -39,6 +40,7 @@ def _filter_records(ds, splits, task_filter):
 
 
 def run(ds, a: argparse.Namespace):
+    ds = require_single_fold(ds)
     splits = [s.strip() for s in a.split.split(",") if s.strip()] if a.split else None
 
     ds = _filter_records(ds, splits, a.task)

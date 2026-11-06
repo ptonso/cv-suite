@@ -4,7 +4,7 @@ Related: **Read first** [records_dataset](records_dataset.md). **See also** [spl
 
 ## Overview
 
-A key spec is a short string that says how to read one value per record, such as the first folder of its path or a column of a CSV. Commands that need to partition records take key specs as data: `split --group-by` keeps records with the same key together, `split --stratify-by` balances per-key counts, and `eda --group-by` draws one panel per key. The tool never learns what a board, a scene or a survey is. A project states that in a regex, an attribute name or a file.
+A key spec is a short string that says how to read one value per record, such as the first folder of its path or a column of a CSV. Commands that need to partition records take key specs as data: `split --group-by` keeps records with the same key together, `split --stratify-by` balances per-key counts, `sample --stratify-by` samples inside each key value, and `eda --group-by` draws one panel per key. The tool never learns what a board, a scene or a survey is. A project states that in a regex, an attribute name or a file.
 
 A group is a set of records linked by keys. When several specs are given, two records share a group when they share a value under any spec, so groups are the connected components of that relation.
 
@@ -18,6 +18,7 @@ A group is a set of records linked by keys. When several specs are given, two re
 
 - `common/keys.py`: `parse_key`, `layout_path`, `group_records`.
 
+
 ## Contracts
 
 ### Key specs
@@ -28,6 +29,7 @@ A group is a set of records linked by keys. When several specs are given, two re
 | `dir:N` | the Nth folder of the layout path, counting from 0 at the dataset root; a negative N counts from the end; the file name is not a folder |
 | `attr:NAME` | `str(record.attributes[NAME])` |
 | `file:PATH.csv` | the second column of the row whose first column equals the layout path, or else the file name when the file name is unique in the dataset |
+| `split` | the record's split (`train`, `val` or `test`); valid wherever one value per record is read, such as `sample --stratify-by` |
 | `similar:BITS` | the id of the connected component of records whose perceptual hashes are within BITS bits ([similarity](similarity.md)); valid for group specs only |
 
 Examples: `dir:0` on `pcb1/Data/Images/Anomaly/000.JPG` gives `pcb1`; `dir:-1` gives `Anomaly`; `regex:^(\w+)-` on `oil-3-cam2-0042.jpg` gives `oil`.
@@ -39,10 +41,10 @@ Examples: `dir:0` on `pcb1/Data/Images/Anomaly/000.JPG` gives `pcb1`; `dir:-1` g
 ### Grouping
 
 ```python
-group_records(dataset, specs: list[str]) -> list[str]
+group_records(dataset, specs: list[str], *, bits=None) -> list[str]
 ```
 
-Returns one group id per record, aligned with `dataset.records`. Ids are the smallest member key of the component, so they are the same for any record order. With no specs, each record is its own group.
+Returns one group id per record, aligned with `dataset.records`. Ids are the smallest member key of the component, so they are the same for any record order. With no specs, each record is its own group. A `similar:` spec hashes the images unless the caller passes `bits`, the records' packed hashes in [similarity](similarity.md) layout.
 
 ## Constraints
 
@@ -56,3 +58,4 @@ Returns one group id per record, aligned with `dataset.records`. Ids are the sma
 
 - [What belongs in cvsuite](../logs/2026-11-05_what-belongs-in-cvsuite.md): why group definitions enter as data.
 - [The eda branch](../logs/2026-11-05_eda-branch.md): why `--group-by` carries the same meaning in `eda`.
+- [Gaps found by migrating the projects](../logs/2026-11-06_migration-gaps.md): why the `split` key exists.

@@ -217,7 +217,6 @@ def test_label_pipeline_commands_end_to_end(work: Dict[str, Path]):
         dst=work["yolo_from_lm"] / "det",
         task="det",
         splits="",
-        hardlink=False,
     ))
     cmd_to_yolo.run(ds_lm, ns_to)
     assert (work["yolo_from_lm"] / "det" / "data.yaml").exists()
@@ -231,7 +230,6 @@ def test_label_pipeline_commands_end_to_end(work: Dict[str, Path]):
         dst=work["yolo_from_lm"] / "seg",
         task="seg",
         splits="",
-        hardlink=False,
     ))
     cmd_to_yolo.run(ds_lm, ns_to)
     assert (work["yolo_from_lm"] / "seg" / "data.yaml").exists()
@@ -244,7 +242,6 @@ def test_label_pipeline_commands_end_to_end(work: Dict[str, Path]):
         dst=work["yolo_from_lm"] / "pose",
         task="pose",
         splits="",
-        hardlink=False,
     ))
     cmd_to_yolo.run(ds_lm, ns_to)
     assert (work["yolo_from_lm"] / "pose" / "data.yaml").exists()
@@ -262,7 +259,6 @@ def test_label_pipeline_commands_end_to_end(work: Dict[str, Path]):
         dst=work["labelme_out"],
         split="train",
         embed_image=False,
-        hardlink=False
     ))
     cmd_to_labelme.run(ds_yolo, ns)
     assert list(work["labelme_out"].rglob("*.json")), "yolo2labelme wrote no JSONs"
@@ -290,7 +286,7 @@ def test_label_pipeline_commands_end_to_end(work: Dict[str, Path]):
     imwrite_rgb(coco_src / "cocoimg.jpg", seed=9)
     yolo_from_coco = work["root"] / "yolo_from_coco"
     ds_coco = router.ingest(src=coco_src / "coco.json", from_hint="coco", task="det")
-    cmd_to_yolo.run(ds_coco, type("A", (), dict(dst=yolo_from_coco, task="det", splits="train", hardlink=False)))
+    cmd_to_yolo.run(ds_coco, type("A", (), dict(dst=yolo_from_coco, task="det", splits="train")))
     assert list((yolo_from_coco / "train" / "labels").glob("*.txt")), "coco2yolo wrote no labels"
 
     # ---------- inspect (skip GUI in tests) ----------
@@ -326,8 +322,6 @@ def test_label_pipeline_commands_end_to_end(work: Dict[str, Path]):
         splits="train",
         imgsz=32,
         per_image=2,
-        min_gap=0.02,
-        iou_thresh=0.0,
         seed=123,
         preview=work["neg_out"] / "preview.jpg"
     ))
@@ -404,7 +398,6 @@ def test_labelme_write_preserves_existing_shapes_and_adds_new_polys(tmp_path: Pa
         dst=out,
         split="",
         embed_image=False,
-        hardlink=False,
     ))
     cmd_to_labelme.run(ds, ns)
 
@@ -501,7 +494,7 @@ def test_crop_dets_labelme_roundtrip_preserves_reversible_metadata(tmp_path: Pat
     out = tmp_path / "crop_labelme"
     cmd_to_labelme.run(
         cropped,
-        type("Args", (), dict(dst=out, val_frac=0.0, test_frac=0.0, seed=0, embed_image=False, hardlink=False)),
+        type("Args", (), dict(dst=out, embed_image=False)),
     )
     assert not (out / "train").exists()
     payload = json.loads(next(out.glob("*.json")).read_text(encoding="utf-8"))
@@ -559,7 +552,7 @@ def test_inverse_crop_dets_pastes_crops_flags_and_preserves_unchanged_records(tm
     crop_root = tmp_path / "modified_crops"
     cmd_to_labelme.run(
         cropped,
-        type("Args", (), dict(dst=crop_root, val_frac=0.0, test_frac=0.0, seed=0, embed_image=False, hardlink=False)),
+        type("Args", (), dict(dst=crop_root, embed_image=False)),
     )
     assert not (crop_root / "train").exists()
     add_crop_flags_and_fill(crop_root, {"with-corrosion": True, "object-blue": False}, (1, 200, 3))
@@ -603,7 +596,7 @@ def test_inverse_crop_dets_pastes_smaller_overlapping_crops_last(tmp_path: Path)
     crop_root = tmp_path / "modified_overlap_crops"
     cmd_to_labelme.run(
         cropped,
-        type("Args", (), dict(dst=crop_root, val_frac=0.0, test_frac=0.0, seed=0, embed_image=False, hardlink=False)),
+        type("Args", (), dict(dst=crop_root, embed_image=False)),
     )
     fill_crop_by_id(crop_root, "train:scene.png:box:0", (200, 1, 3))
     fill_crop_by_id(crop_root, "train:scene.png:box:1", (2, 180, 4))
@@ -656,7 +649,7 @@ def test_inverse_crop_dets_pastes_resized_crop_modes(tmp_path: Path, args: dict[
     crop_root = tmp_path / f"modified_{args['pad_type']}_{args['long_size'] or args['imgsz']}"
     cmd_to_labelme.run(
         cropped,
-        type("Args", (), dict(dst=crop_root, val_frac=0.0, test_frac=0.0, seed=0, embed_image=False, hardlink=False)),
+        type("Args", (), dict(dst=crop_root, embed_image=False)),
     )
     assert not (crop_root / "train").exists()
     add_crop_flags_and_fill(crop_root, {}, (2, 180, 4))
@@ -944,7 +937,7 @@ def test_crop_dets_to_yolo_det_splits_one_source_into_many_records(tmp_path: Pat
     args = type(
         "Args",
         (),
-        dict(dst=dst, task="det", val_frac=0.0, test_frac=0.0, seed=0, hardlink=False),
+        dict(dst=dst, task="det"),
     )
     cmd_to_yolo.run(cropped, args)
 
@@ -984,7 +977,7 @@ def test_crop_dets_to_yolo_seg_preserves_polygons(tmp_path: Path):
     args = type(
         "Args",
         (),
-        dict(dst=dst, task="seg", val_frac=0.0, test_frac=0.0, seed=0, hardlink=False),
+        dict(dst=dst, task="seg"),
     )
     cmd_to_yolo.run(cropped, args)
 
@@ -1026,7 +1019,7 @@ def test_crop_dets_to_labelme_clears_stale_source_shapes(tmp_path: Path):
     )
     cmd_to_labelme.run(
         cropped,
-        type("Args", (), dict(dst=out, val_frac=0.0, test_frac=0.0, seed=0, embed_image=False, hardlink=False)),
+        type("Args", (), dict(dst=out, embed_image=False)),
     )
 
     assert not (out / "train").exists()

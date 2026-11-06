@@ -5,7 +5,12 @@ from pathlib import Path
 from PIL import Image
 import pytest
 
+from cvsuite.common.core import VisionDataset
 from cvsuite.label import cli as label_cli
+
+
+def stage(name: str) -> VisionDataset:
+    return VisionDataset(records=[], classes=[name])
 
 
 @pytest.mark.parametrize(
@@ -33,7 +38,7 @@ def test_label_cli_to_results_max_flag_is_not_swallowed_by_max_depth(monkeypatch
     Image.new("RGB", (16, 16), color=(255, 255, 255)).save(src / "a.jpg")
     captured = {}
 
-    def _fake_ingest_many(srcs, from_hint="auto", keypoints_file=None, max_depth=-1):
+    def _fake_ingest_many(srcs, from_hint="auto", keypoints_file=None, max_depth=-1, images_dir=None):
         captured["max_depth"] = max_depth
         from cvsuite.common.core import VisionDataset
 
@@ -149,20 +154,6 @@ def test_label_cli_routes_to_ops_inverse_crop_dets(monkeypatch, tmp_path: Path) 
     assert captured["modified_crops"] == crops
 
 
-def test_label_cli_rejects_sample_hardlink_for_non_image_outputs() -> None:
-    with pytest.raises(SystemExit, match="sample --hardlink"):
-        label_cli.main(
-            [
-                "dataset.yaml",
-                "sample",
-                "--count",
-                "1",
-                "--hardlink",
-                "audit",
-            ]
-        )
-
-
 def test_label_help_hides_removed_filter_and_cache_commands(capsys) -> None:
     assert label_cli.main(["--help"]) == 0
     out = capsys.readouterr().out
@@ -200,16 +191,16 @@ def test_label_ocr_help_lists_model_metadata(capsys) -> None:
 def test_label_cli_routes_filter_train_logistic_then_output(monkeypatch, tmp_path: Path) -> None:
     events = []
 
-    def _fake_ingest_many(srcs, from_hint="auto", keypoints_file=None, max_depth=-1):
+    def _fake_ingest_many(srcs, from_hint="auto", keypoints_file=None, max_depth=-1, images_dir=None):
         events.append(("ingest", srcs, from_hint, keypoints_file, max_depth))
-        return {"stage": "ingested"}
+        return stage("ingested")
 
     def _fake_train(dataset, args):
-        events.append(("train", dataset, args.gt_src, args.out_config, getattr(args, "config", None)))
-        return {"stage": "filtered"}
+        events.append(("train", dataset.classes, args.gt_src, args.out_config, getattr(args, "config", None)))
+        return stage("filtered")
 
     def _fake_output(dataset, args):
-        events.append(("output", dataset, args.dst))
+        events.append(("output", dataset.classes, args.dst))
         return 0
 
     monkeypatch.setattr("cvsuite.label.cli.router.ingest_many", _fake_ingest_many)
@@ -239,32 +230,32 @@ def test_label_cli_routes_filter_train_logistic_then_output(monkeypatch, tmp_pat
 
     assert exit_code == 0
     assert events[0] == ("ingest", [src], "images", None, -1)
-    assert events[1] == ("train", {"stage": "ingested"}, gt, out_cfg, None)
-    assert events[2] == ("output", {"stage": "filtered"}, audit)
+    assert events[1] == ("train", ["ingested"], gt, out_cfg, None)
+    assert events[2] == ("output", ["filtered"], audit)
 
 
 def test_label_cli_routes_filter_apply_inline_thresholds(monkeypatch, tmp_path: Path) -> None:
     events = []
 
-    def _fake_ingest_many(srcs, from_hint="auto", keypoints_file=None, max_depth=-1):
+    def _fake_ingest_many(srcs, from_hint="auto", keypoints_file=None, max_depth=-1, images_dir=None):
         events.append(("ingest", srcs, from_hint, max_depth))
-        return {"stage": "ingested"}
+        return stage("ingested")
 
     def _fake_apply(dataset, args):
         events.append(
             (
                 "apply",
-                dataset,
+                dataset.classes,
                 args.config,
                 args.det_conf,
                 args.class_det_conf,
                 args.class_seg_conf,
             )
         )
-        return {"stage": "filtered"}
+        return stage("filtered")
 
     def _fake_output(dataset, args):
-        events.append(("output", dataset, args.dst))
+        events.append(("output", dataset.classes, args.dst))
         return 0
 
     monkeypatch.setattr("cvsuite.label.cli.router.ingest_many", _fake_ingest_many)
@@ -294,5 +285,5 @@ def test_label_cli_routes_filter_apply_inline_thresholds(monkeypatch, tmp_path: 
 
     assert exit_code == 0
     assert events[0] == ("ingest", [src], "images", -1)
-    assert events[1] == ("apply", {"stage": "ingested"}, None, 0.25, ["dog=0.6"], ["dog=0.7"])
-    assert events[2] == ("output", {"stage": "filtered"}, audit)
+    assert events[1] == ("apply", ["ingested"], None, 0.25, ["dog=0.6"], ["dog=0.7"])
+    assert events[2] == ("output", ["filtered"], audit)

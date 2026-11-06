@@ -16,7 +16,7 @@ Label outputs write the dataset as annotation formats (`to-yolo`, `to-labelme`, 
 
 ## Contracts
 
-- `to-yolo`: `dst`, `--task {auto,det,seg,pose}`, `--boxes-from-polygons`, `--link-mode`, `--overwrite`, `--with-stats`. Writes a split tree for every split present, `train` included.
+- `to-yolo`: `dst`, `--task {auto,det,seg,pose}`, `--boxes-from-polygons` (the box is the polygon extent clipped to the image), `--link-mode`, `--overwrite`, `--with-stats`. Writes a split tree for every split present, `train` included.
 - `to-labelme`: `dst`, `--embed-image`, `--link-mode`, `--overwrite`, `--with-stats`. Writes flat `dst/` sidecars when every record is in `train`, and split directories otherwise.
 - `to-coco`: `dst` (a directory; a file path is rejected), `--coco-style`, `--no-images` (annotations and `data.yaml` only, with absolute `file_name` entries), `--link-mode`, `--overwrite`, `--with-stats`. Default layout `<dst>/<split>/_annotations.coco.json` with images under the split dir and helper `<dst>/data.yaml` (`format: coco`); `--coco-style` gives `images/` plus `annotations/annotations_<split>.json`.
 - `to-results`: `dst`, `--names-mode`, `--imgsz`, `--max`, `--skip-annotated`, `--skip-crops`, `--skip-masks`, `--skip-keypoints`, `--with-stats`. It is a review output and takes a dataset with at most one fold.

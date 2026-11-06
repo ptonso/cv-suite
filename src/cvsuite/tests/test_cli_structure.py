@@ -6,10 +6,15 @@ import pytest
 
 from cvsuite.branch_cli import discover_commands
 from cvsuite import cli
+from cvsuite.common.core import VisionDataset
 from cvsuite.classify import cli as classify_cli
 from cvsuite.gen import cli as gen_cli
 from cvsuite.label import cli as label_cli
 from cvsuite.vlm import cli as vlm_cli
+
+
+def _stage(name: str) -> VisionDataset:
+    return VisionDataset(records=[], classes=[name])
 
 
 def test_cli_discovers_expected_branches() -> None:
@@ -112,7 +117,7 @@ def test_top_level_classify_branch_name_is_unknown() -> None:
 def test_class_branch_help_uses_pipeline_usage(capsys) -> None:
     assert classify_cli.main(["--help"]) == 0
     out = capsys.readouterr().out
-    assert "usage: cvsuite class <src> [ingest opts] [<transform> <transform args>] <command> [args]" in out
+    assert "usage: cvsuite class <src> [ingest opts] [<transform> <transform args>]... <command> [args]" in out
     assert "--from {auto,images,unstructured,multi-class}" in out
     assert "formats: auto, images, unstructured, multi-class" in out
     assert "to-class-dir" in out
@@ -124,6 +129,7 @@ def test_class_branch_keeps_expected_registries() -> None:
     assert "to-class-dir" in classify_cli.COMMANDS
     assert "infer" in classify_cli.TRANSFORM_COMMANDS
     assert "sample" in classify_cli.TRANSFORM_COMMANDS
+    assert {"split", "select", "remap-classes"} <= set(classify_cli.TRANSFORM_COMMANDS)
     assert "ops-sample" not in classify_cli.TRANSFORM_COMMANDS
 
 
@@ -132,14 +138,14 @@ def test_class_branch_pipeline_runs_infer_then_output(monkeypatch, tmp_path: Pat
 
     def _fake_ingest(src, from_hint="auto"):
         events.append(("ingest", src, from_hint))
-        return {"stage": "ingested"}
+        return _stage("ingested")
 
     def _fake_infer(dataset, args):
-        events.append(("infer", dataset, args.prompt, args.provider))
-        return {"stage": "inferred"}
+        events.append(("infer", dataset.classes, args.prompt, args.provider))
+        return _stage("inferred")
 
     def _fake_output(dataset, args):
-        events.append(("output", dataset, args.dst))
+        events.append(("output", dataset.classes, args.dst))
         return 0
 
     monkeypatch.setattr("cvsuite.classify.cli.io.ingest", _fake_ingest)
@@ -152,7 +158,7 @@ def test_class_branch_pipeline_runs_infer_then_output(monkeypatch, tmp_path: Pat
     assert events[0] == ("ingest", src, "auto")
     assert events[1][0] == "infer"
     assert events[1][2] == "cat,dog"
-    assert events[2] == ("output", {"stage": "inferred"}, dst)
+    assert events[2] == ("output", ["inferred"], dst)
 
 
 def test_class_branch_pipeline_runs_sample_then_output(monkeypatch, tmp_path: Path) -> None:
@@ -160,16 +166,16 @@ def test_class_branch_pipeline_runs_sample_then_output(monkeypatch, tmp_path: Pa
 
     def _fake_ingest(src, from_hint="auto"):
         events.append(("ingest", src, from_hint))
-        return {"stage": "ingested"}
+        return _stage("ingested")
 
     def _fake_sample(dataset, args):
         events.append(
-            ("sample", dataset, args.mode, args.max_n_per_class, args.max_frac_per_class, args.hardlink, args.seed)
+            ("sample", dataset.classes, args.mode, args.max_n_per_class, args.max_frac_per_class, args.seed)
         )
-        return {"stage": "sampled"}
+        return _stage("sampled")
 
     def _fake_output(dataset, args):
-        events.append(("output", dataset, args.dst, args.hardlink))
+        events.append(("output", dataset.classes, args.dst, args.link_mode))
         return 0
 
     monkeypatch.setattr("cvsuite.classify.cli.io.ingest", _fake_ingest)
@@ -179,11 +185,11 @@ def test_class_branch_pipeline_runs_sample_then_output(monkeypatch, tmp_path: Pa
     src = tmp_path / "images"
     dst = tmp_path / "classes"
     assert classify_cli.main(
-        [str(src), "sample", "--mode", "balance", "--max-n-per-class", "9", "--hardlink", "--seed", "4", "to-class-dir", str(dst)]
+        [str(src), "sample", "--mode", "balance", "--max-n-per-class", "9", "--seed", "4", "to-class-dir", str(dst), "--link-mode", "hard"]
     ) == 0
     assert events[0] == ("ingest", src, "auto")
-    assert events[1] == ("sample", {"stage": "ingested"}, "balance", 9, None, True, 4)
-    assert events[2] == ("output", {"stage": "sampled"}, dst, True)
+    assert events[1] == ("sample", ["ingested"], "balance", 9, None, 4)
+    assert events[2] == ("output", ["sampled"], dst, "hard")
 
 
 def test_class_branch_pipeline_accepts_multi_class_ingest(monkeypatch, tmp_path: Path) -> None:
@@ -191,10 +197,10 @@ def test_class_branch_pipeline_accepts_multi_class_ingest(monkeypatch, tmp_path:
 
     def _fake_ingest(src, from_hint="auto"):
         events.append(("ingest", src, from_hint))
-        return {"stage": "ingested"}
+        return _stage("ingested")
 
     def _fake_output(dataset, args):
-        events.append(("output", dataset, args.dst))
+        events.append(("output", dataset.classes, args.dst))
         return 0
 
     monkeypatch.setattr("cvsuite.classify.cli.io.ingest", _fake_ingest)
@@ -204,7 +210,7 @@ def test_class_branch_pipeline_accepts_multi_class_ingest(monkeypatch, tmp_path:
     dst = tmp_path / "classes"
     assert classify_cli.main([str(src), "--from", "multi-class", "to-class-dir", str(dst)]) == 0
     assert events[0] == ("ingest", src, "multi-class")
-    assert events[1] == ("output", {"stage": "ingested"}, dst)
+    assert events[1] == ("output", ["ingested"], dst)
 
 
 def test_label_branch_keeps_expected_registries() -> None:
@@ -213,6 +219,7 @@ def test_label_branch_keeps_expected_registries() -> None:
     assert "to-classified" not in label_cli.COMMANDS
     assert "filter" in label_cli.TRANSFORM_COMMANDS
     assert "ground" in label_cli.TRANSFORM_COMMANDS
+    assert {"split", "select", "remap-classes"} <= set(label_cli.TRANSFORM_COMMANDS)
     assert "ocr" in label_cli.TRANSFORM_COMMANDS
     assert "ops" in label_cli.TRANSFORM_COMMANDS
     assert "sample" in label_cli.TRANSFORM_COMMANDS

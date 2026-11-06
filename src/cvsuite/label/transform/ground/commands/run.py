@@ -7,6 +7,7 @@ from pathlib import Path
 
 from cvsuite.common.fm.providers.registry import format_available_providers
 
+FM = True
 DEFAULT_THRESHOLD = 0.3
 DEFAULT_IOU_THRESHOLD = 0.4
 

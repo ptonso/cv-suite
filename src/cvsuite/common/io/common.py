@@ -12,8 +12,9 @@ import json
 import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Sequence
+from typing import Any, Callable, Iterable, Iterator, Sequence
 
 import yaml
 from PIL import Image
@@ -168,17 +169,36 @@ def resolve_mask_path(dataset: VisionDataset, record: VisionRecord) -> Path:
     return path
 
 
-def copy_or_link(src: Path, dst: Path, *, hardlink: bool = False) -> None:
+LINK_MODES = ("copy", "hard", "sym")
+
+
+def copy_or_link(src: Path, dst: Path, *, link_mode: str = "copy") -> None:
+    """Place `src` at `dst` by copy, hard link or absolute symbolic link. A failure raises; no mode falls back."""
+    if link_mode not in LINK_MODES:
+        raise ValueError(f"Unknown link mode {link_mode!r}; expected one of {', '.join(LINK_MODES)}.")
     dst.parent.mkdir(parents=True, exist_ok=True)
-    if dst.exists():
+    if os.path.lexists(dst):
         raise FileExistsError(f"Destination already exists: {dst}")
-    if hardlink:
-        try:
+    try:
+        if link_mode == "copy":
+            shutil.copy2(src, dst)
+        elif link_mode == "hard":
             os.link(src, dst)
-            return
-        except OSError:
-            pass
-    shutil.copy2(src, dst)
+        else:
+            dst.symlink_to(Path(src).resolve())
+    except OSError as exc:
+        raise OSError(f"Cannot {link_mode} {src} to {dst}: {exc}") from exc
+
+
+def check_symlinkable(dataset: VisionDataset) -> None:
+    """Raise when `--link-mode sym` would point at an image inside a temporary folder the run removes."""
+    temporary = [Path(item).resolve() for item in dataset.meta.get(CLEANUP_DIRS_META, [])]
+    for record in dataset.records:
+        if record.image is None:
+            continue
+        source = resolve_record_image_path(dataset, record).resolve()
+        if any(source.is_relative_to(folder) for folder in temporary):
+            raise ValueError(f"--link-mode sym cannot link {source}: it lies in a temporary folder that is removed after the run. Use copy or hard.")
 
 
 class OutputClaims:
@@ -410,12 +430,30 @@ def classification_scores(info: Classification | None) -> dict[str, float]:
     return out
 
 
+def build_in_temp_root(prefix: str, build: Callable[[Path], VisionDataset]) -> VisionDataset:
+    """Run `build(root)` in a fresh temporary folder that the returned dataset lists in `meta["cleanup_dirs"]`.
+
+    The folder is removed at once when `build` raises.
+    """
+    root = Path(tempfile.mkdtemp(prefix=prefix))
+    try:
+        dataset = build(root)
+    except BaseException:
+        shutil.rmtree(root, ignore_errors=True)
+        raise
+    dataset.meta = {**dataset.meta, CLEANUP_DIRS_META: [*dataset.meta.get(CLEANUP_DIRS_META, []), str(root)]}
+    return dataset
+
+
+def remove_dirs(paths: Iterable[str | Path]) -> None:
+    for item in paths:
+        if item:
+            shutil.rmtree(Path(str(item)), ignore_errors=True)
+
+
 def cleanup_dataset_resources(dataset: VisionDataset | None) -> None:
     if dataset is None:
         return
     raw = dataset.meta.get(CLEANUP_DIRS_META, [])
-    if not isinstance(raw, list):
-        return
-    for item in raw:
-        if item:
-            shutil.rmtree(Path(str(item)), ignore_errors=True)
+    if isinstance(raw, list):
+        remove_dirs(raw)

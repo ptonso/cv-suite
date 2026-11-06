@@ -76,6 +76,6 @@ class SampleConfig:
     count: Optional[int]
     frac: Optional[float]
     hardlink: bool
-    seed: Optional[int]
+    seed: int
     dry_run: bool
     verbose: int

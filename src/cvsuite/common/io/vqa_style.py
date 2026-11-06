@@ -405,7 +405,7 @@ class VQAStyleAdapter:
         dst: Path,
         *,
         splits: list[str] | None = None,
-        hardlink: bool = False,
+        link_mode: str = "copy",
         skip_images: bool = False,
         **options: object,
     ) -> None:
@@ -442,7 +442,7 @@ class VQAStyleAdapter:
         for record, rel_path in zip(filtered, rel_paths):
             src = common.resolve_record_image_path(dataset, record)
             if not skip_images:
-                common.copy_or_link(src, images_root / rel_path, hardlink=hardlink)
+                common.copy_or_link(src, images_root / rel_path, link_mode=link_mode)
 
             qas = [common.qa_to_payload(qa, question_key="prompt") for qa in record.vqas]
             item: dict[str, Any] = {

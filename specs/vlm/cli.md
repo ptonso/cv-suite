@@ -30,7 +30,7 @@ Help forms, all also working with a leading `<src>` (for example `cvsuite vlm ./
 
 Execution: `vlm.core.router.ingest(Path(src), from_hint=...)`, transform `run(dataset, parsed_transform)`, output `run(dataset, parsed_output)`, and `io.cleanup_dataset_resources(dataset)` always in `finally`.
 
-Uses `build_parser`, `parse_help` and `split_rest` from [pipeline](../pipeline.md#helpers-in-cvsuitebranch_cli); `apply_transform_output_hints` is not used.
+Uses `build_parser`, `parse_help` and `split_rest` from [pipeline](../pipeline.md#helpers-in-cvsuitebranch_cli).
 
 ### Format detection precedence
 

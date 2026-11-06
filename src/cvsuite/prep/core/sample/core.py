@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-import math
-import random
 from dataclasses import dataclass
 from pathlib import Path
+
+from cvsuite.common.sampling import sample_size, take
 
 from ..actions import Action, apply_actions
 from ..config import SampleConfig
@@ -16,6 +16,7 @@ from ..logging import Logger
 class SampleEntry:
     src: Path
     name: str
+    key: str
 
 
 def _load_json_safe(path: Path) -> dict | None:
@@ -65,7 +66,7 @@ def _looks_like_annotated_dataset(src: Path) -> bool:
 
 def _collect_entries(config: SampleConfig, logger: Logger) -> list[SampleEntry]:
     entries: list[SampleEntry] = []
-    for src in config.srcs:
+    for source_index, src in enumerate(config.srcs):
         if not src.exists():
             raise SystemExit(f"Source not found: {src}")
         if not src.is_dir():
@@ -82,7 +83,7 @@ def _collect_entries(config: SampleConfig, logger: Logger) -> list[SampleEntry]:
             )
 
         src_entries = [
-            SampleEntry(src=child, name=child.name)
+            SampleEntry(src=child, name=child.name, key=f"{source_index}:{child.relative_to(src).as_posix()}")
             for child in children
             if child.is_file() and is_image(child)
         ]
@@ -93,24 +94,6 @@ def _collect_entries(config: SampleConfig, logger: Logger) -> list[SampleEntry]:
 
     logger.info(f"Pooled {len(entries)} images across {len(config.srcs)} source folder(s).")
     return entries
-
-
-def _choose_indices(*, total: int, count: int | None, frac: float | None, rng: random.Random) -> list[int]:
-    if total <= 0:
-        return []
-    if count is not None:
-        if count > total:
-            raise SystemExit(f"Requested --count {count} but only {total} pooled images are available.")
-        return rng.sample(range(total), count)
-    if frac is None:
-        return []
-    if frac < 0.0 or frac > 1.0:
-        raise SystemExit("--frac must be between 0 and 1.")
-    chosen = int(math.floor(total * frac))
-    if frac > 0.0:
-        chosen = max(1, chosen)
-    chosen = min(chosen, total)
-    return rng.sample(range(total), chosen)
 
 
 def _next_flat_dst(dst: Path, used_names: set[str], name: str) -> Path:
@@ -133,13 +116,8 @@ def _next_flat_dst(dst: Path, used_names: set[str], name: str) -> Path:
 def run_sample_core(config: SampleConfig) -> None:
     logger = Logger(verbose=config.verbose)
     entries = _collect_entries(config, logger)
-    rng = random.Random(config.seed) if config.seed is not None else random.Random()
-    indices = _choose_indices(
-        total=len(entries),
-        count=config.count,
-        frac=config.frac,
-        rng=rng,
-    )
+    chosen = sample_size(len(entries), count=config.count, frac=config.frac)
+    indices = take([entry.key for entry in entries], config.seed, chosen)
     selected = sorted((entries[idx] for idx in indices), key=lambda entry: str(entry.src))
     logger.info(f"Selected {len(selected)} pooled images for sampling.")
 

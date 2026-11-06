@@ -2,6 +2,17 @@
 
 import argparse
 
+from cvsuite.common.io.common import LINK_MODES
+
+
+def attach_link_mode(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--link-mode",
+        choices=LINK_MODES,
+        default="copy",
+        help="How images reach the destination: copy bytes (default), hard link, or absolute symbolic link. A failed link raises.",
+    )
+
 
 def attach_overwrite_flag(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(

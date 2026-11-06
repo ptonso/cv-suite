@@ -7,6 +7,7 @@ import yaml
 from cvsuite.label.core.audit import run_checks
 from cvsuite.common.core.utils import write_yaml
 from cvsuite.common.core import VisionDataset
+from cvsuite.common.io.folds import require_single_fold
 
 
 def attach(p: argparse.ArgumentParser) -> None:
@@ -16,6 +17,7 @@ def attach(p: argparse.ArgumentParser) -> None:
 
 
 def run(ds: VisionDataset, a: argparse.Namespace):
+    ds = require_single_fold(ds)
     splits = [s.strip() for s in a.split.split(",") if s.strip()] if a.split else None
     thresholds = {} if not a.thresholds else dict(kv.split("=") for kv in a.thresholds.split(",") if "=" in kv)
     subset = ds

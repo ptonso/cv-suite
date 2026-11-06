@@ -1,8 +1,7 @@
 """Write a VisionDataset to YOLO format.
 
 Writes <split>/images and <split>/labels[_task]/ with YOLO txt labels and a
-data.yaml describing the dataset. Supports hard-linking images instead of
-copying bytes.
+data.yaml describing the dataset.
 """
 
 from pathlib import Path
@@ -10,11 +9,11 @@ import argparse
 
 from cvsuite.common.core import VisionDataset
 from cvsuite.common.io import write_dataset
-from cvsuite.common.io.attach import attach_overwrite_flag
+from cvsuite.common.io.attach import attach_link_mode, attach_overwrite_flag
+from cvsuite.common.io.folds import fold_targets
 
 from cvsuite.common.stats import attach_with_stats_flag, build_label_stats, emit_stats_yaml, make_export_context
 from cvsuite.label.core.schema import write_data_yaml
-from cvsuite.label.output.common import assign_output_splits, attach_split_assignment_args
 
 
 def _present_splits(dst: Path) -> list[str]:
@@ -47,7 +46,7 @@ def _canonical_task(raw: str) -> str:
     return value
 
 
-def _yaml_task_name(ds, requested: str) -> str:
+def _yaml_task_name(ds, requested: str, boxes_from_polygons: bool = False) -> str:
     if requested == "det":
         return "det"
     if requested == "seg":
@@ -55,6 +54,8 @@ def _yaml_task_name(ds, requested: str) -> str:
     if requested == "pose":
         return "pose"
     if any(box.kind not in {"pose", "seg"} for record in ds.records for box in record.boxes):
+        return "det"
+    if boxes_from_polygons and any(record.polys for record in ds.records):
         return "det"
     if any(record.kpts for record in ds.records):
         return "pose"
@@ -71,37 +72,33 @@ def attach(p: argparse.ArgumentParser) -> None:
         default="auto",
         help="Task that should own plain labels/; auto exports all detected tasks and prefers det when multiple are present.",
     )
-    attach_split_assignment_args(p)
-    p.add_argument("--hardlink", action="store_true", help="Hard-link images instead of copying bytes.")
+    p.add_argument("--boxes-from-polygons", action="store_true", help="Also write one detection box per polygon, taken from the polygon extent clipped to the image, so polygon-only data can be written as detection.")
+    attach_link_mode(p)
     attach_overwrite_flag(p)
     attach_with_stats_flag(p)
 
 
 def run(ds, a: argparse.Namespace):
-    if not bool(getattr(a, "preserve_splits", False)):
-        ds = assign_output_splits(
-            ds,
-            val_frac=getattr(a, "val_frac", 0.0),
-            test_frac=getattr(a, "test_frac", 0.0),
-            seed=getattr(a, "seed", 0),
-        )
     task_arg = getattr(a, "task", "auto")
-    write_dataset(
-        ds,
-        a.dst,
-        format="yolo",
-        task=_canonical_task(task_arg),
-        hardlink=bool(getattr(a, "hardlink", False)),
-        overwrite=bool(getattr(a, "overwrite", False)),
-    )
-    write_data_yaml(
-        a.dst / "data.yaml",
-        root=a.dst,
-        classes=ds.classes,
-        task=_yaml_task_name(ds, task_arg),
-        split_paths=_yaml_split_paths(a.dst),
-    )
-    if bool(getattr(a, "with_stats", False)):
-        ctx = make_export_context(branch="label", command="to-yolo", dst=a.dst)
-        emit_stats_yaml(build_label_stats(ds, ctx), ctx)
+    boxes_from_polygons = bool(getattr(a, "boxes_from_polygons", False))
+    for fold_ds, dst in fold_targets(ds, a.dst):
+        write_dataset(
+            fold_ds,
+            dst,
+            format="yolo",
+            task=_canonical_task(task_arg),
+            link_mode=getattr(a, "link_mode", "copy"),
+            boxes_from_polygons=boxes_from_polygons,
+            overwrite=bool(getattr(a, "overwrite", False)),
+        )
+        write_data_yaml(
+            dst / "data.yaml",
+            root=dst,
+            classes=fold_ds.classes,
+            task=_yaml_task_name(fold_ds, task_arg, boxes_from_polygons),
+            split_paths=_yaml_split_paths(dst),
+        )
+        if bool(getattr(a, "with_stats", False)):
+            ctx = make_export_context(branch="label", command="to-yolo", dst=dst)
+            emit_stats_yaml(build_label_stats(fold_ds, ctx), ctx)
     return ds

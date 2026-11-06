@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io as bytes_io
 import json
-import os
 import re
 import shutil
 from pathlib import Path
@@ -14,6 +13,7 @@ from PIL import Image
 from cvsuite.common.core.enums import IMG_EXTS
 from cvsuite.common.core import ImageRecord, Record, VQA
 from cvsuite.common.core import VisionDataset
+from cvsuite.common.io.common import copy_or_link  # noqa: F401
 
 DEFAULT_MANIFEST_NAMES = ("vqa.json", "manifest.json")
 CAPTION_PROMPT = "Describe this image in one concise sentence."
@@ -104,19 +104,6 @@ def resolve_record_image_path(dataset: VisionDataset, record: Record) -> Path:
     if dataset.root is not None:
         return Path(dataset.root) / path
     return path
-
-
-def copy_or_link(src: Path, dst: Path, *, hardlink: bool = False) -> None:
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    if dst.exists():
-        raise FileExistsError(f"Destination already exists: {dst}")
-    if hardlink:
-        try:
-            os.link(src, dst)
-            return
-        except OSError:
-            pass
-    shutil.copy2(src, dst)
 
 
 def read_image_bytes(dataset: VisionDataset, record: Record, *, force_jpeg: bool = False) -> tuple[bytes, str]:

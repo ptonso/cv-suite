@@ -24,7 +24,7 @@ Example: `cvsuite label ./raw ground --provider gdino --prompt "car,person" spli
 
 Usage: `cvsuite label <src> [<src> ...] [ingest opts] [<transform> <transform args>]... <command> [args]`.
 
-Base arguments: one or more `src`; `--from {auto,yolo,labelme,coco,images,class-dir,semseg-mask}`; `--keypoints-file <path>` (LabelMe only); `--max-depth <n>` (recursion limit for flat and class-dir readers, `-1` unlimited); `-h/--help`.
+Base arguments: one or more `src`; `--from {auto,yolo,labelme,coco,images,class-dir,semseg-mask}`; `--keypoints-file <path>` (LabelMe only); `--max-depth <n>` (recursion limit for flat and class-dir readers, `-1` unlimited); `--images-dir <dir>` (COCO only, repeatable); `-h/--help`.
 
 Transforms: `filter`, `ground`, `ocr`, `ops`, `sample`, `select`, `remap-classes`, `split`. Outputs: `to-yolo`, `to-labelme`, `to-coco`, `to-results`, `audit`, `inspect`. The model-backed transforms are `ground` and `ocr`. Stage splitting, the chain rules and the steps record follow [pipeline](../pipeline.md#chaining).
 
@@ -50,3 +50,4 @@ Auto-detection order is in [adapters](adapters.md#format-detection).
 
 - [Branch per domain](../logs/2026-09-20_branch-per-domain.md).
 - [Chained transforms and split as a transform](../logs/2026-11-05_chained-transforms-and-split.md): why a run takes several transforms.
+- [Gaps found by migrating the projects](../logs/2026-11-06_migration-gaps.md): why COCO takes `--images-dir`.

@@ -124,7 +124,7 @@ class FlatJsonIO:
         return VisionDataset(records=records, root=src, meta={"format": "json"})
 
     @classmethod
-    def write(cls, dataset: VisionDataset, dst: Path, *, hardlink: bool = False, skip_images: bool = False) -> None:
+    def write(cls, dataset: VisionDataset, dst: Path, *, link_mode: str = "copy", skip_images: bool = False) -> None:
         io.ensure_has_vqas(dataset, allow_empty=True)
         dst.mkdir(parents=True, exist_ok=True)
         if not dataset.records:
@@ -148,6 +148,6 @@ class FlatJsonIO:
             if not skip_images:
                 if img_dst.exists():
                     raise FileExistsError(f"Destination already exists: {img_dst}")
-                io.copy_or_link(src, img_dst, hardlink=hardlink)
+                io.copy_or_link(src, img_dst, link_mode=link_mode)
             payload = _sidecar_payload(record, sample_key=sample_key, image_filename=preferred_name)
             json_dst.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -4,19 +4,18 @@ from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-import tempfile
 from typing import Any
 
 import cv2
 import numpy as np
 
 from cvsuite.common.core import BBox, ImageRecord, Polygon, Record, VisionDataset
+from cvsuite.common.io.common import build_in_temp_root
 from cvsuite.label.core.crops import (
     IntRect,
     Rect,
     bbox_crop_xyxy,
-    clamp_crop_xyxy,
-    expand_rect_xyxy,
+    crop_rect_xyxy,
     resolve_image_path,
 )
 from cvsuite.label.transform.ops.core.crop_dets import CROP_DETS_ATTR, CVSUITE_ATTR, CropRef, parse_crop_id
@@ -80,13 +79,20 @@ def _margin_frac(meta: dict[str, Any], crop_id: str) -> float:
     return margin_frac
 
 
+def _margin_px(meta: dict[str, Any], crop_id: str) -> float:
+    raw = meta.get("margin_px", 0.0)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw < 0:
+        raise ValueError(f"Crop {crop_id!r} margin_px must be a non-negative number.")
+    return float(raw)
+
+
 def _pad_type(meta: dict[str, Any], crop_id: str) -> str | None:
     raw = meta.get("pad_type")
     if raw is None:
         return None
-    if raw != "background":
-        raise ValueError(f"Crop {crop_id!r} pad_type may only be 'background' when present.")
-    return "background"
+    if raw not in {"background", "shift"}:
+        raise ValueError(f"Crop {crop_id!r} pad_type may only be 'background' or 'shift' when present.")
+    return str(raw)
 
 
 def _record_keys(rec: Record, root: Path | None) -> set[str]:
@@ -123,7 +129,7 @@ def _crop_image(path: Path) -> np.ndarray:
     return image
 
 
-def _source_geometry(rec: Record, ref: CropRef, margin_frac: float, crop_id: str) -> tuple[Rect, IntRect]:
+def _source_geometry(rec: Record, ref: CropRef, margin_frac: float, margin_px: float, square: bool, crop_id: str) -> tuple[Rect, IntRect]:
     if ref.source_kind == "box":
         if not (0 <= ref.source_index < len(rec.boxes)):
             raise IndexError(f"Crop {crop_id!r} source box index is out of range.")
@@ -135,15 +141,20 @@ def _source_geometry(rec: Record, ref: CropRef, margin_frac: float, crop_id: str
             img_w=rec.image.width,
             img_h=rec.image.height,
             margin_frac=margin_frac,
+            margin_px=margin_px,
+            square=square,
         )
     elif ref.source_kind == "polygon":
         if not (0 <= ref.source_index < len(rec.polys)):
             raise IndexError(f"Crop {crop_id!r} source polygon index is out of range.")
         source_xyxy = _polygon_bbox(rec.polys[ref.source_index], img_w=rec.image.width, img_h=rec.image.height)
-        crop_xyxy = clamp_crop_xyxy(
-            *expand_rect_xyxy(source_xyxy, margin_frac=margin_frac),
+        crop_xyxy = crop_rect_xyxy(
+            source_xyxy,
             img_w=rec.image.width,
             img_h=rec.image.height,
+            margin_frac=margin_frac,
+            margin_px=margin_px,
+            square=square,
         )
     else:
         raise ValueError(f"Unsupported crop source kind: {ref.source_kind!r}")
@@ -172,10 +183,13 @@ def _applications(original: VisionDataset, crops: VisionDataset) -> list[CropApp
         seen[crop_id] = crop_path
         ref = parse_crop_id(crop_id)
         record_index = _record_index(original, ref, key_map)
+        pad_type = _pad_type(meta, crop_id)
         source_xyxy, crop_xyxy = _source_geometry(
             original.records[record_index],
             ref,
             _margin_frac(meta, crop_id),
+            _margin_px(meta, crop_id),
+            pad_type == "shift",
             crop_id,
         )
 
@@ -188,7 +202,7 @@ def _applications(original: VisionDataset, crops: VisionDataset) -> list[CropApp
                 source_index=ref.source_index,
                 source_xyxy=source_xyxy,
                 crop_xyxy=crop_xyxy,
-                pad_type=_pad_type(meta, crop_id),
+                pad_type=pad_type,
                 flags=_flags(anchor),
             )
         )
@@ -333,6 +347,8 @@ def _render_mapping(crop: np.ndarray, app: CropApplication) -> tuple[Rect, float
     if app.pad_type == "background":
         side = max(crop_w, crop_h)
         return _background_source_xyxy(app.crop_xyxy), out_w / side, out_h / side, 0.0, 0.0
+    if app.pad_type == "shift":
+        return (float(crop_x1), float(crop_y1), float(crop_x2), float(crop_y2)), out_w / crop_w, out_h / crop_h, 0.0, 0.0
 
     scale = min(out_w / crop_w, out_h / crop_h)
     resized_w = max(1, int(round(crop_w * scale)))
@@ -397,12 +413,15 @@ def _set_provenance(rec: Record, apps: Sequence[CropApplication]) -> None:
 
 
 def inverse_crop_dets_dataset(original: VisionDataset, modified_crops: VisionDataset) -> VisionDataset:
+    return build_in_temp_root("vislabel_inverse_crop_", lambda tmp_root: _inverse_crop_dets_into(tmp_root, original, modified_crops))
+
+
+def _inverse_crop_dets_into(tmp_root: Path, original: VisionDataset, modified_crops: VisionDataset) -> VisionDataset:
     apps = _applications(original, modified_crops)
     apps_by_record: dict[int, list[CropApplication]] = {}
     for app in apps:
         apps_by_record.setdefault(app.record_index, []).append(app)
 
-    tmp_root = Path(tempfile.mkdtemp(prefix="vislabel_inverse_crop_"))
     out_records: list[Record] = []
     for idx, rec in enumerate(original.records):
         out_rec = deepcopy(rec)

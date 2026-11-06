@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import shutil
 from typing import Any
 
 from cvsuite.common.core import BBox, Polygon, VisionDataset, VisionRecord
@@ -131,6 +130,26 @@ def _infer_split(coco_path: Path, root: Path, default: str) -> str:
     return default
 
 
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+
+
+def _image_index(folders: list[Path]) -> dict[str, tuple[Path, Path]]:
+    """File name and relative name to `(path, relative path)` over the `--images-dir` folders; a name in two folders raises."""
+    index: dict[str, tuple[Path, Path]] = {}
+    owner: dict[str, Path] = {}
+    for folder in folders:
+        for path in sorted(folder.rglob("*")):
+            if path.suffix.lower() not in IMAGE_SUFFIXES or not path.is_file():
+                continue
+            rel = path.relative_to(folder)
+            for name in {path.name, rel.as_posix()}:
+                if name in index and owner[name] != folder:
+                    raise ValueError(f"The image name `{name}` is in both --images-dir folders {owner[name]} and {folder}.")
+                index.setdefault(name, (path, rel))
+                owner.setdefault(name, folder)
+    return index
+
+
 def _resolve_image_path(coco_path: Path, file_name: str, root: Path | None) -> Path:
     candidates = [
         coco_path.parent / file_name,
@@ -144,7 +163,7 @@ def _resolve_image_path(coco_path: Path, file_name: str, root: Path | None) -> P
     return candidates[0]
 
 
-def _ingest_from_obj(path: Path, coco: dict[str, Any], *, task: str, split: str, root: Path | None) -> VisionDataset:
+def _ingest_from_obj(path: Path, coco: dict[str, Any], *, task: str, split: str, root: Path | None, index: dict[str, tuple[Path, Path]] | None = None) -> VisionDataset:
     images = {image["id"]: image for image in coco.get("images", [])}
     categories = sorted(coco.get("categories", []), key=lambda category: category.get("id", 0))
     id_to_idx = {category["id"]: idx for idx, category in enumerate(categories)}
@@ -157,9 +176,13 @@ def _ingest_from_obj(path: Path, coco: dict[str, Any], *, task: str, split: str,
         if image_id in items:
             return items[image_id]
         image_info = images[image_id]
-        image_path = _resolve_image_path(path, str(image_info["file_name"]), root)
+        file_name = str(image_info["file_name"])
+        found = (index or {}).get(file_name) or (index or {}).get(Path(file_name).name)
+        image_path = found[0] if found else _resolve_image_path(path, file_name, root)
         image = common.image_info_from_path(image_path)
-        if root is None:
+        if found:
+            image.path = found[0]
+        elif root is None:
             image.path = Path(str(image_info["file_name"]))
         else:
             try:
@@ -170,19 +193,34 @@ def _ingest_from_obj(path: Path, coco: dict[str, Any], *, task: str, split: str,
         record = VisionRecord(
             image=image,
             split=split,
-            rel_image_path=image.path,
+            rel_image_path=found[1] if found else image.path,
             attributes={"coco_image_id": image_id},
             vqas=list(vqas_by_image.get(image_id, [])),
         )
         items[image_id] = record
         return record
 
+    missing = [
+        str(info["file_name"])
+        for info in images.values()
+        if not (((index or {}).get(str(info["file_name"])) or (index or {}).get(Path(str(info["file_name"])).name)) or _resolve_image_path(path, str(info["file_name"]), root).exists())
+    ]
+    if missing:
+        raise FileNotFoundError(f"{len(missing)} image(s) listed in {path} were not found, for example: {', '.join(missing[:5])}. Pass --images-dir when the images are elsewhere.")
+    for image_id in images:
+        record_for(image_id)
+
     for annotation in coco.get("annotations", []):
         if not isinstance(annotation, dict):
             continue
-        image_id = annotation["image_id"]
+        image_id = annotation.get("image_id")
+        if image_id not in images:
+            raise ValueError(f"COCO annotation {annotation.get('id')} in {path} refers to image id {image_id!r}, which is not listed in `images`.")
+        category_id = annotation.get("category_id")
+        if category_id not in id_to_idx:
+            raise ValueError(f"COCO annotation {annotation.get('id')} in {path} refers to category id {category_id!r}, which is not listed in `categories`.")
         record = record_for(image_id)
-        cls_idx = id_to_idx.get(annotation.get("category_id", 0), 0)
+        cls_idx = id_to_idx[category_id]
         x, y, width, height = annotation.get("bbox", [0, 0, 0, 0])
         record.boxes.append(
             BBox(
@@ -253,7 +291,7 @@ class CocoAdapter:
         return bool(_find_coco_jsons(src))
 
     @classmethod
-    def _ingest_from_data_yaml(cls, data_yaml: Path, *, task: str, splits: list[str] | None) -> VisionDataset:
+    def _ingest_from_data_yaml(cls, data_yaml: Path, *, task: str, splits: list[str] | None, index: dict[str, tuple[Path, Path]] | None = None) -> VisionDataset:
         data = common.read_yaml(data_yaml) or {}
         if not isinstance(data, dict):
             raise ValueError(f"COCO data yaml must parse to an object: {data_yaml}")
@@ -287,7 +325,7 @@ class CocoAdapter:
         categories_payload: list[dict[str, Any]] | None = None
         for split in use_splits:
             for annotation_path in split_entries.get(split, []):
-                dataset = _ingest_from_obj(annotation_path, _read_json(annotation_path), task=task, split=split, root=root)
+                dataset = _ingest_from_obj(annotation_path, _read_json(annotation_path), task=task, split=split, root=root, index=index)
                 has_seg_any = has_seg_any or any(record.polys for record in dataset.records)
                 if classes is None:
                     classes = dataset.classes
@@ -311,13 +349,15 @@ class CocoAdapter:
     @classmethod
     def read(cls, src: Path, *, task: str = "auto", splits: list[str] | None = None, **options: object) -> VisionDataset:
         path = src.resolve()
+        folders = [Path(d).resolve() for d in (options.get("images_dir") or [])]
+        index = _image_index(folders) if folders else None
         if path.is_file() and path.suffix.lower() in {".yaml", ".yml"}:
-            return cls._ingest_from_data_yaml(path, task=task, splits=splits)
+            return cls._ingest_from_data_yaml(path, task=task, splits=splits, index=index)
         if path.is_dir():
             for name in ("data.yaml", "data.yml", "dataset.yaml", "dataset.yml"):
                 candidate = path / name
                 if candidate.exists() and cls.matches(candidate):
-                    return cls._ingest_from_data_yaml(candidate, task=task, splits=splits)
+                    return cls._ingest_from_data_yaml(candidate, task=task, splits=splits, index=index)
             coco_files = _find_coco_jsons(path)
             if not coco_files:
                 raise FileNotFoundError(f"No COCO annotation JSONs found under: {path}")
@@ -331,7 +371,7 @@ class CocoAdapter:
                 split = _infer_split(coco_path, root=path, default="train")
                 if allowed_splits and split not in allowed_splits:
                     continue
-                dataset = _ingest_from_obj(coco_path, payload, task=task, split=split, root=path)
+                dataset = _ingest_from_obj(coco_path, payload, task=task, split=split, root=path, index=index)
                 has_seg_any = has_seg_any or any(record.polys for record in dataset.records)
                 if classes is None:
                     classes = dataset.classes
@@ -347,7 +387,7 @@ class CocoAdapter:
             if categories_payload is not None:
                 dataset.round_trip["coco"] = {"categories": categories_payload}
             return dataset
-        return _ingest_from_obj(path, _read_json(path), task=task, split="train", root=path.parent)
+        return _ingest_from_obj(path, _read_json(path), task=task, split="train", root=path.parent, index=index)
 
     @classmethod
     def _write_one_split(
@@ -359,7 +399,7 @@ class CocoAdapter:
         task: str,
         claims: common.OutputClaims,
         coco_style: bool,
-        hardlink: bool,
+        link_mode: str,
         no_images: bool = False,
     ) -> None:
         categories_payload = dataset.round_trip.get("coco", {}).get("categories")
@@ -408,10 +448,7 @@ class CocoAdapter:
                 while img_dst.exists():
                     img_dst = img_root / f"{src.stem}_{counter}{src.suffix}"
                     counter += 1
-                if hardlink:
-                    common.copy_or_link(src, img_dst, hardlink=True)
-                else:
-                    shutil.copy2(src, img_dst)
+                common.copy_or_link(src, img_dst, link_mode=link_mode)
                 file_name = img_dst.name
             images.append({"id": img_id, "file_name": file_name, "width": record.image.width, "height": record.image.height})
 
@@ -456,7 +493,7 @@ class CocoAdapter:
         splits: list[str] | None = None,
         task: str | None = None,
         coco_style: bool = False,
-        hardlink: bool = False,
+        link_mode: str = "copy",
         no_images: bool = False,
         claims: common.OutputClaims | None = None,
         **options: object,
@@ -469,5 +506,5 @@ class CocoAdapter:
         for split in normalized_splits:
             cls._write_one_split(
                 dataset, dst, split=split, task=use_task, claims=claims,
-                coco_style=coco_style, hardlink=hardlink, no_images=no_images,
+                coco_style=coco_style, link_mode=link_mode, no_images=no_images,
             )

@@ -58,7 +58,7 @@ def test_label_sample_preserves_annotations_and_split() -> None:
     assert len(sampled.records) == 1
     assert sampled.records[0].boxes
     assert sampled.records[0].split in {"train", "val"}
-    assert sampled.meta["sample"]["sample_size"] == 1
+    assert sampled.meta["step_info"]["sample_size"] == 1
 
 
 def test_label_cli_sample_merges_multiple_sources_and_preserves_splits_on_output(tmp_path: Path) -> None:
@@ -73,10 +73,10 @@ def test_label_cli_sample_merges_multiple_sources_and_preserves_splits_on_output
             "sample",
             "--count",
             "2",
-            "--hardlink",
             "to-yolo",
             str(dst),
-            "--preserve-splits",
+            "--link-mode",
+            "hard",
         ]
     )
 

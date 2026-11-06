@@ -5,9 +5,10 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 from pathlib import Path
-import os
 import shutil
 
+from cvsuite.common.io.attach import attach_link_mode
+from cvsuite.common.io.common import copy_or_link
 from cvsuite.common.stats import attach_with_stats_flag, build_gen_stats, emit_stats_yaml, make_export_context
 
 GEN_OUTPUT_KEY_ATTR = "gen_output_key"
@@ -21,8 +22,9 @@ def attach(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--no-original",
         action="store_true",
-        help="For edit outputs, do not export hardlinked copies of the original source images.",
+        help="For edit outputs, do not export the original source images next to the results.",
     )
+    attach_link_mode(parser)
     attach_with_stats_flag(parser)
 
 
@@ -117,7 +119,7 @@ def _original_output_name(record, resolved_source: Path) -> str:
     return resolved_source.name
 
 
-def _link_original(src: Path, dst: Path, *, overwrite: bool) -> None:
+def _link_original(src: Path, dst: Path, *, overwrite: bool, link_mode: str) -> None:
     if dst.exists():
         if not overwrite:
             raise FileExistsError(str(dst))
@@ -126,10 +128,10 @@ def _link_original(src: Path, dst: Path, *, overwrite: bool) -> None:
         if dst.is_dir():
             raise IsADirectoryError(str(dst))
         dst.unlink()
-    os.link(src, dst)
+    copy_or_link(src, dst, link_mode=link_mode)
 
 
-def _export_originals(dataset, dst_dir: Path, *, overwrite: bool) -> list[Path]:
+def _export_originals(dataset, dst_dir: Path, *, overwrite: bool, link_mode: str) -> list[Path]:
     artifacts: list[Path] = []
     seen: set[str] = set()
     for record in dataset.records:
@@ -143,7 +145,7 @@ def _export_originals(dataset, dst_dir: Path, *, overwrite: bool) -> list[Path]:
             continue
         seen.add(source_key)
         dst = dst_dir / _original_output_name(record, source_path)
-        _link_original(source_path, dst, overwrite=overwrite)
+        _link_original(source_path, dst, overwrite=overwrite, link_mode=link_mode)
         artifacts.append(dst)
     return artifacts
 
@@ -160,7 +162,7 @@ def run(dataset, args: argparse.Namespace):
         dataset.root = dst.parent
         primary_artifacts = [dst]
         if _should_export_originals(dataset, args):
-            primary_artifacts.extend(_export_originals(dataset, dst.parent, overwrite=overwrite))
+            primary_artifacts.extend(_export_originals(dataset, dst.parent, overwrite=overwrite, link_mode=getattr(args, "link_mode", "copy")))
     else:
         dst_dir = _resolve_multi_output_dir(args.dst)
         for idx, record in enumerate(dataset.records):
@@ -171,7 +173,7 @@ def run(dataset, args: argparse.Namespace):
             primary_artifacts.append(dst)
         dataset.root = dst_dir
         if _should_export_originals(dataset, args):
-            primary_artifacts.extend(_export_originals(dataset, dst_dir, overwrite=overwrite))
+            primary_artifacts.extend(_export_originals(dataset, dst_dir, overwrite=overwrite, link_mode=getattr(args, "link_mode", "copy")))
     if bool(getattr(args, "with_stats", False)):
         ctx = make_export_context(
             branch="gen",

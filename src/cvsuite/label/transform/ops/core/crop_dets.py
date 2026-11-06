@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import tempfile
 from typing import List, Literal, Sequence, Tuple
 
 import cv2
@@ -10,20 +9,20 @@ import numpy as np
 
 from cvsuite.common.core import BBox, Classification, ImageRecord, Polygon, Record
 from cvsuite.common.core import VisionDataset
+from cvsuite.common.io.common import build_in_temp_root
 from cvsuite.label.core.crops import (
     IntRect,
     Rect,
     annotation_label,
     bbox_crop_xyxy,
-    clamp_crop_xyxy,
-    expand_rect_xyxy,
+    crop_rect_xyxy,
     next_output_path,
     resolve_image_path,
     sanitize_label,
 )
 
 Point = Tuple[float, float]
-PadType = Literal["background", "black", "gray", "white"]
+PadType = Literal["background", "black", "gray", "white", "shift"]
 CVSUITE_ATTR = "cvsuite"
 CROP_DETS_ATTR = "crop_dets"
 PAD_COLORS: dict[str, tuple[int, int, int]] = {
@@ -109,14 +108,17 @@ def _crop_metadata(
     imgsz: int | None,
     pad_type: PadType,
     margin_frac: float,
+    margin_px: float,
 ) -> dict[str, object]:
     source_ref = _source_image_ref(rec, img_path, root)
     meta: dict[str, object] = {
         "crop_id": build_crop_id(split, source_ref, anchor.source_kind, anchor.source_box_index),
         "margin_frac": margin_frac,
     }
-    if imgsz is not None and pad_type == "background":
-        meta["pad_type"] = "background"
+    if margin_px:
+        meta["margin_px"] = margin_px
+    if imgsz is not None and pad_type in {"background", "shift"}:
+        meta["pad_type"] = pad_type
     return meta
 
 
@@ -160,6 +162,8 @@ def _anchors_for_record(
     classes: Sequence[str],
     *,
     margin_frac: float = 0.0,
+    margin_px: float = 0.0,
+    square: bool = False,
 ) -> tuple[List[CropAnchor], int]:
     anchors: List[CropAnchor] = []
     skipped_invalid = 0
@@ -174,6 +178,8 @@ def _anchors_for_record(
             img_w=img_w,
             img_h=img_h,
             margin_frac=margin_frac,
+            margin_px=margin_px,
+            square=square,
         )
         if crop_xyxy is None:
             skipped_invalid += 1
@@ -196,10 +202,13 @@ def _anchors_for_record(
 
     for idx, poly in enumerate(rec.polys):
         source_xyxy = _polygon_bbox_xyxy(poly, img_w=img_w, img_h=img_h)
-        crop_xyxy = clamp_crop_xyxy(
-            *expand_rect_xyxy(source_xyxy, margin_frac=margin_frac),
+        crop_xyxy = crop_rect_xyxy(
+            source_xyxy,
             img_w=img_w,
             img_h=img_h,
+            margin_frac=margin_frac,
+            margin_px=margin_px,
+            square=square,
         )
         if crop_xyxy is None:
             skipped_invalid += 1
@@ -420,6 +429,20 @@ def _render_crop(
         return None
 
     if imgsz is not None:
+        if pad_type == "shift":
+            window = image[crop_y1:crop_y2, crop_x1:crop_x2]
+            if window.size == 0:
+                return None
+            interpolation = cv2.INTER_AREA if imgsz < max(crop_w, crop_h) else cv2.INTER_LANCZOS4
+            return cv2.resize(window, (imgsz, imgsz), interpolation=interpolation), CropRenderSpec(
+                source_xyxy=(float(crop_x1), float(crop_y1), float(crop_x2), float(crop_y2)),
+                out_w=imgsz,
+                out_h=imgsz,
+                scale_x=float(imgsz) / float(crop_w),
+                scale_y=float(imgsz) / float(crop_h),
+                pad_x=0.0,
+                pad_y=0.0,
+            )
         if pad_type == "background":
             bg_crop, source_xyxy = _background_square_crop(image, crop_xyxy)
             canvas = _resize_exact(bg_crop, imgsz, imgsz)
@@ -579,6 +602,30 @@ def _transform_polygon(
     )
 
 
+def _provenance(
+    crop_meta: dict[str, object],
+    rec: Record,
+    img_path: Path,
+    anchor: CropAnchor,
+    spec: CropRenderSpec,
+    imgsz: int | None,
+    pad_type: PadType,
+    margin_frac: float,
+    margin_px: float,
+    root: Path | None,
+) -> dict[str, object]:
+    x1, y1, x2, y2 = anchor.source_xyxy
+    return {
+        "crop_id": crop_meta["crop_id"],
+        "source_image": _source_image_ref(rec, img_path, root),
+        "source_box_px": [round(x1, 2), round(y1, 2), round(x2 - x1, 2), round(y2 - y1, 2)],
+        "crop_rect_px": [int(round(v)) for v in spec.source_xyxy],
+        "margin_frac": margin_frac,
+        "margin_px": margin_px,
+        "pad_type": pad_type if imgsz is not None else None,
+    }
+
+
 def crop_dets_dataset(
     ds: VisionDataset,
     *,
@@ -586,6 +633,25 @@ def crop_dets_dataset(
     long_size: int | None = None,
     pad_type: PadType = "black",
     margin_frac: float = 0.0,
+    margin_px: float = 0.0,
+) -> VisionDataset:
+    return build_in_temp_root(
+        "vislabel_crop_",
+        lambda tmp_root: _crop_dets_into(
+            tmp_root, ds, imgsz=imgsz, long_size=long_size, pad_type=pad_type, margin_frac=margin_frac, margin_px=margin_px
+        ),
+    )
+
+
+def _crop_dets_into(
+    tmp_root: Path,
+    ds: VisionDataset,
+    *,
+    imgsz: int | None,
+    long_size: int | None,
+    pad_type: PadType,
+    margin_frac: float,
+    margin_px: float,
 ) -> VisionDataset:
     if imgsz is not None and imgsz <= 0:
         raise ValueError("--imgsz must be a positive integer.")
@@ -595,10 +661,14 @@ def crop_dets_dataset(
         raise ValueError("Use at most one of --imgsz and --long-size.")
     if margin_frac < 0:
         raise ValueError("--margin-frac must be non-negative.")
-    if pad_type not in {"background", "black", "gray", "white"}:
-        raise ValueError("--pad-type must be one of background, black, gray, or white.")
+    if margin_px < 0:
+        raise ValueError("--margin-px must be non-negative.")
+    if pad_type not in {"background", "black", "gray", "white", "shift"}:
+        raise ValueError("--pad-type must be one of background, black, gray, white, or shift.")
+    if pad_type == "shift" and imgsz is None:
+        raise ValueError("--pad-type shift requires --imgsz.")
+    square = pad_type == "shift"
 
-    tmp_root = Path(tempfile.mkdtemp(prefix="vislabel_crop_"))
     crops_root = tmp_root / "crops"
     out_records: List[Record] = []
     skipped_invalid = 0
@@ -606,7 +676,7 @@ def crop_dets_dataset(
     for rec in ds.records:
         split = rec.split or "train"
         img_path = resolve_image_path(rec.image.path, ds.root)
-        anchors, skipped = _anchors_for_record(rec, ds.classes, margin_frac=margin_frac)
+        anchors, skipped = _anchors_for_record(rec, ds.classes, margin_frac=margin_frac, margin_px=margin_px, square=square)
         skipped_invalid += skipped
         if not anchors:
             continue
@@ -652,6 +722,7 @@ def crop_dets_dataset(
                 imgsz=imgsz,
                 pad_type=pad_type,
                 margin_frac=margin_frac,
+                margin_px=margin_px,
             )
             _set_crop_metadata(out_box, crop_meta)
             dst = crops_root / split / sanitize_label(label) / f"{img_path.stem}__obj{anchor.source_box_index}.jpg"
@@ -669,7 +740,7 @@ def crop_dets_dataset(
                     boxes=[out_box],
                     polys=[] if out_poly is None else [out_poly],
                     labelme_shapes=[],
-                    attributes={},
+                    attributes={"crop": _provenance(crop_meta, rec, img_path, anchor, spec, imgsz, pad_type, margin_frac, margin_px, ds.root)},
                     classification=Classification(label=label, score=anchor.score),
                 )
             )
@@ -684,6 +755,7 @@ def crop_dets_dataset(
             "crop_long_size": long_size,
             "crop_pad_type": pad_type if imgsz is not None else None,
             "crop_margin_frac": margin_frac,
+            "crop_margin_px": margin_px,
             "skipped_invalid": skipped_invalid,
             "crop_root": tmp_root,
         }

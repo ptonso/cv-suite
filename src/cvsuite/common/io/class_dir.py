@@ -22,9 +22,6 @@ Example multi-label root:
 
 from __future__ import annotations
 
-import math
-import os
-import random
 import re
 from pathlib import Path
 
@@ -293,44 +290,6 @@ def _effective_class_labels(
     return [_effective_class_label(record, threshold=applied_threshold, unlabeled_name=unlabeled_name, class_thresholds=class_thresholds)]
 
 
-def _split_flags(count: int, *, val_frac: float, test_frac: float) -> list[str]:
-    test_n = int(math.floor(count * test_frac))
-    val_n = int(math.floor(count * val_frac))
-    train_n = max(0, count - test_n - val_n)
-    return (["test"] * test_n) + (["val"] * val_n) + (["train"] * train_n)
-
-
-def _assign_output_splits(
-    dataset: VisionDataset,
-    *,
-    threshold: float | None = None,
-    unlabeled_name: str = "unlabeled",
-    class_thresholds: dict[str, float] | None = None,
-    val_frac: float = 0.0,
-    test_frac: float = 0.0,
-    seed: int = 0,
-    randomized: bool = False,
-) -> list[str]:
-    rng = random.Random(seed)
-    split_by_index: dict[int, str] = {}
-    if randomized:
-        indices = list(range(len(dataset.records)))
-        rng.shuffle(indices)
-        flags = _split_flags(len(indices), val_frac=val_frac, test_frac=test_frac)
-        split_by_index.update(zip(indices, flags))
-    else:
-        by_label: dict[str, list[int]] = {}
-        for idx, record in enumerate(dataset.records):
-            label = _effective_class_label(record, threshold=threshold, unlabeled_name=unlabeled_name, class_thresholds=class_thresholds)
-            by_label.setdefault(label, []).append(idx)
-        for label in sorted(by_label):
-            indices = by_label[label]
-            rng.shuffle(indices)
-            flags = _split_flags(len(indices), val_frac=val_frac, test_frac=test_frac)
-            split_by_index.update(zip(indices, flags))
-    return [split_by_index.get(idx, "train") for idx, _record in enumerate(dataset.records)]
-
-
 def _sanitize_label_parts(label: str) -> list[str]:
     parts: list[str] = []
     for raw_part in re.split(r"[\\/]+", str(label)):
@@ -475,43 +434,23 @@ class ClassDirAdapter:
         splits: list[str] | None = None,
         threshold: float | None = None,
         class_thresholds: dict[str, float] | None = None,
-        hardlink: bool = False,
+        link_mode: str = "copy",
         unlabeled_name: str = "unlabeled",
-        val_frac: float = 0.0,
-        test_frac: float = 0.0,
-        seed: int = 0,
-        randomized: bool = False,
         multi_label: bool = False,
-        preserve_splits: bool = False,
         claims: common.OutputClaims | None = None,
         **options: object,
     ) -> None:
         claims = claims or common.OutputClaims()
-        if val_frac < 0 or test_frac < 0 or val_frac > 1 or test_frac > 1 or (val_frac + test_frac) > 1:
-            raise ValueError("Split fractions must satisfy val_frac + test_frac <= 1.0.")
-
         filtered = dataset.records
         if splits:
             allowed = {common.canonical_split_id(item) for item in splits}
             filtered = [record for record in dataset.records if record.split in allowed]
-        split_output = bool(preserve_splits or val_frac or test_frac)
-        assigned_splits = [record.split for record in filtered]
-        if split_output and not preserve_splits:
-            temp_dataset = VisionDataset(records=filtered, classes=dataset.classes, root=dataset.root, meta=dataset.meta)
-            assigned_splits = _assign_output_splits(
-                temp_dataset,
-                threshold=threshold,
-                unlabeled_name=unlabeled_name,
-                class_thresholds=class_thresholds,
-                val_frac=val_frac,
-                test_frac=test_frac,
-                seed=seed,
-                randomized=randomized,
-            )
+        split_output = any(record.split != "train" for record in filtered)
 
         dst.mkdir(parents=True, exist_ok=True)
         temp_dataset = VisionDataset(records=filtered, classes=dataset.classes, root=dataset.root, meta=dataset.meta)
-        for idx, record in enumerate(filtered):
+        plan: list[tuple[VisionRecord, Path]] = []
+        for record in filtered:
             labels = _effective_class_labels(
                 temp_dataset,
                 record,
@@ -523,15 +462,12 @@ class ClassDirAdapter:
             for label in labels:
                 parts = _sanitize_label_parts(label)
                 if split_output:
-                    parts.insert(0, assigned_splits[idx] or "train")
-                out_dir = claims.claim(dst.joinpath(*parts))
-                out_dir.mkdir(parents=True, exist_ok=True)
-                src = common.resolve_record_image_path(dataset, record)
-                out_path = _next_output_path(out_dir, src.name)
-                if hardlink:
-                    try:
-                        os.link(src, out_path)
-                    except OSError:
-                        out_path.write_bytes(src.read_bytes())
-                else:
-                    out_path.write_bytes(src.read_bytes())
+                    parts.insert(0, record.split or "train")
+                plan.append((record, dst.joinpath(*parts)))
+        for folder in sorted({folder for _, folder in plan}, key=lambda path: len(path.parts)):
+            claims.claim(folder)
+        for record, out_dir in plan:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            src = common.resolve_record_image_path(dataset, record)
+            out_path = _next_output_path(out_dir, src.name)
+            common.copy_or_link(src, out_path, link_mode=link_mode)

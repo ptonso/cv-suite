@@ -47,17 +47,29 @@ def _normalize_shape_type(shape: dict[str, Any]) -> str:
     return "point" if shape_type == "points" else shape_type
 
 
-def _resolve_image_path(json_path: Path, image_path_field: str, root: Path) -> Path | None:
+def _resolve_image_path(json_path: Path, image_path_field: str, root: Path, index: dict[Path, dict[str, Path]]) -> Path | None:
+    """The `imagePath` target, else an image of the same stem beside the JSON, else a file of that name under the root or its parent.
+
+    `index` caches the file names of each searched tree, so the search walks it once per read.
+    """
     candidate = (json_path.parent / image_path_field).resolve()
     if candidate.exists():
         return candidate
+    for ext in sorted(common.IMG_EXTS):
+        beside = json_path.with_suffix(ext)
+        if beside.exists():
+            return beside.resolve()
     sibling_images = (json_path.parent.parent / "images" / Path(image_path_field).name).resolve()
     if sibling_images.exists():
         return sibling_images
     for base in (root, root.parent):
-        hit = next(base.rglob(Path(image_path_field).name), None)
-        if hit:
-            return hit.resolve()
+        if base not in index:
+            index[base] = {}
+            for hit in sorted(base.rglob("*")):
+                index[base].setdefault(hit.name, hit)
+        found = index[base].get(Path(image_path_field).name)
+        if found is not None:
+            return found.resolve()
     return None
 
 
@@ -290,6 +302,7 @@ class LabelMeAdapter:
         keypoints_path = Path(keypoints_file) if isinstance(keypoints_file, (str, Path)) else None
         json_paths = [src.resolve()] if src.is_file() else sorted(src.rglob("*.json"))
 
+        index: dict[Path, dict[str, Path]] = {}
         raw_records: list[dict[str, Any]] = []
         class_names: list[str] = []
         seen_classes: set[str] = set()
@@ -300,7 +313,7 @@ class LabelMeAdapter:
             image_path_field = payload.get("imagePath")
             if image_path_field is None:
                 raise ValueError(f"LabelMe JSON is missing imagePath: {json_path}")
-            image_abs = _resolve_image_path(json_path, str(image_path_field), root)
+            image_abs = _resolve_image_path(json_path, str(image_path_field), root, index)
             if image_abs is None:
                 continue
             width = payload.get("imageWidth")
@@ -378,7 +391,7 @@ class LabelMeAdapter:
         *,
         splits: list[str] | None = None,
         embed_image: bool = False,
-        hardlink: bool = False,
+        link_mode: str = "copy",
         claims: common.OutputClaims | None = None,
         **options: object,
     ) -> None:
@@ -414,7 +427,7 @@ class LabelMeAdapter:
                 except FileNotFoundError:
                     image_data = record.round_trip.get("labelme", {}).get("imageData")
             else:
-                common.copy_or_link(src, img_dst, hardlink=hardlink)
+                common.copy_or_link(src, img_dst, link_mode=link_mode)
 
             original_shapes = list(record.round_trip.get("labelme", {}).get("shapes", []))
             merged_shapes: list[dict[str, Any]] = []

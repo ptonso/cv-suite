@@ -13,7 +13,10 @@ from cvsuite.classify.core import io as classify_io
 from cvsuite.classify.transform.commands import infer as infer_command
 from cvsuite.classify.output.commands import to_class_dir
 from cvsuite.classify.transform.commands.infer import run as run_infer
+from cvsuite.classify.transform.commands import split as split_command
 from cvsuite.classify.transform.commands.sample import run as run_sample
+from cvsuite.classify.transform.commands.split import run as run_split
+from cvsuite.branch_cli import build_parser
 from cvsuite.common.core import Classification, ImageRecord, Record
 from cvsuite.common.core import VisionDataset
 from cvsuite.common.fm.core import prompt_utils
@@ -154,7 +157,7 @@ def test_sample_preserve_mode_scales_class_counts_from_max_n(tmp_path: Path) -> 
 
     assert len(sampled.records) == 4
     assert _count_labels(sampled) == Counter({"bird": 2, "cat": 1, "dog": 1})
-    assert sampled.meta["sample"]["targets"] == {"bird": 2, "cat": 1, "dog": 1}
+    assert sampled.meta["step_info"]["targets"] == {"bird": 2, "cat": 1, "dog": 1}
 
 def test_sample_preserve_mode_supports_fraction_targets(tmp_path: Path) -> None:
     dataset = VisionDataset(
@@ -367,49 +370,23 @@ def test_ingest_multi_class_rejects_conflicting_duplicate_files(tmp_path: Path) 
         classify_io.ingest(src, from_hint="multi-class")
 
 
-def test_to_class_dir_writes_flat_output_when_split_fracs_are_zero(tmp_path: Path) -> None:
+def test_to_class_dir_writes_flat_output_when_every_record_is_train(tmp_path: Path) -> None:
     image_path = _write_image(tmp_path / "src" / "cat.jpg")
-    dataset = VisionDataset(records=[_record(image_path, label="cat", split="val")], root=tmp_path / "src")
+    dataset = VisionDataset(records=[_record(image_path, label="cat")], root=tmp_path / "src")
     dst = tmp_path / "out"
 
-    to_class_dir.run(
-        dataset,
-        Namespace(
-            dst=dst,
-            threshold=None,
-            hardlink=False,
-            unlabeled_name="unlabeled",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
-            randomized=False,
-        ),
-    )
+    to_class_dir.run(dataset, Namespace(dst=dst, threshold=None, link_mode="copy", unlabeled_name="unlabeled"))
 
     assert (dst / "cat" / "cat.jpg").exists()
-    assert not (dst / "val").exists()
     assert not (dst / "train").exists()
 
 
-def test_to_class_dir_preserves_existing_splits_when_requested(tmp_path: Path) -> None:
+def test_to_class_dir_writes_the_splits_the_records_carry(tmp_path: Path) -> None:
     image_path = _write_image(tmp_path / "src" / "cat.jpg")
     dataset = VisionDataset(records=[_record(image_path, label="cat", split="val")], root=tmp_path / "src")
     dst = tmp_path / "out"
 
-    to_class_dir.run(
-        dataset,
-        Namespace(
-            dst=dst,
-            threshold=None,
-            hardlink=False,
-            unlabeled_name="unlabeled",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
-            randomized=False,
-            preserve_splits=True,
-        ),
-    )
+    to_class_dir.run(dataset, Namespace(dst=dst, threshold=None, link_mode="copy", unlabeled_name="unlabeled"))
 
     assert (dst / "val" / "cat" / "cat.jpg").exists()
     assert not (dst / "cat").exists()
@@ -432,12 +409,8 @@ def test_to_class_dir_preserves_nested_class_paths(tmp_path: Path) -> None:
         Namespace(
             dst=dst,
             threshold=None,
-            hardlink=False,
+            link_mode="copy",
             unlabeled_name="unlabeled",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
-            randomized=False,
         ),
     )
 
@@ -447,64 +420,43 @@ def test_to_class_dir_preserves_nested_class_paths(tmp_path: Path) -> None:
     assert not (dst / "lights_led_lights").exists()
 
 
-def test_to_class_dir_assigns_stratified_output_splits(tmp_path: Path) -> None:
+def test_split_then_to_class_dir_writes_stratified_splits(tmp_path: Path) -> None:
     dataset = VisionDataset(
         records=[
-            _record(_write_image(tmp_path / "src" / "cat_1.jpg"), label="cat", split="test"),
-            _record(_write_image(tmp_path / "src" / "cat_2.jpg"), label="cat", split="test"),
-            _record(_write_image(tmp_path / "src" / "dog_1.jpg"), label="dog", split="test"),
-            _record(_write_image(tmp_path / "src" / "dog_2.jpg"), label="dog", split="test"),
+            _record(_write_image(tmp_path / "src" / "cat_1.jpg"), label="cat"),
+            _record(_write_image(tmp_path / "src" / "cat_2.jpg"), label="cat"),
+            _record(_write_image(tmp_path / "src" / "dog_1.jpg"), label="dog"),
+            _record(_write_image(tmp_path / "src" / "dog_2.jpg"), label="dog"),
         ],
         root=tmp_path / "src",
     )
     dst = tmp_path / "out"
 
-    to_class_dir.run(
-        dataset,
-        Namespace(
-            dst=dst,
-            threshold=None,
-            hardlink=False,
-            unlabeled_name="unlabeled",
-            val_frac=0.5,
-            test_frac=0.0,
-            seed=0,
-            randomized=False,
-        ),
-    )
+    split_args = build_parser(split_command, "split").parse_args(["--val-frac", "0.5", "--tolerance", "1"])
+    to_class_dir.run(run_split(dataset, split_args), Namespace(dst=dst, threshold=None, link_mode="copy", unlabeled_name="unlabeled"))
 
     assert len(list((dst / "val" / "cat").glob("*.jpg"))) == 1
     assert len(list((dst / "train" / "cat").glob("*.jpg"))) == 1
     assert len(list((dst / "val" / "dog").glob("*.jpg"))) == 1
     assert len(list((dst / "train" / "dog").glob("*.jpg"))) == 1
-    assert not (dst / "test").exists()
 
 
-def test_to_class_dir_randomized_split_uses_global_counts(tmp_path: Path) -> None:
-    records = [_record(_write_image(tmp_path / "src" / "cat_1.jpg"), label="cat")]
-    records.extend(
-        _record(_write_image(tmp_path / "src" / f"dog_{idx}.jpg"), label="dog")
-        for idx in range(1, 6)
-    )
+def test_split_folds_then_to_class_dir_writes_one_tree_per_fold(tmp_path: Path) -> None:
+    records = [
+        _record(_write_image(tmp_path / "src" / f"{name}_{i}.jpg"), label=name)
+        for name in ("cat", "dog")
+        for i in range(6)
+    ]
     dataset = VisionDataset(records=records, root=tmp_path / "src")
     dst = tmp_path / "out"
 
-    to_class_dir.run(
-        dataset,
-        Namespace(
-            dst=dst,
-            threshold=None,
-            hardlink=False,
-            unlabeled_name="unlabeled",
-            val_frac=0.5,
-            test_frac=0.0,
-            seed=0,
-            randomized=True,
-        ),
-    )
+    split_args = build_parser(split_command, "split").parse_args(["--folds", "3", "--tolerance", "1"])
+    to_class_dir.run(run_split(dataset, split_args), Namespace(dst=dst, threshold=None, link_mode="copy", unlabeled_name="unlabeled"))
 
-    assert len(list((dst / "val").rglob("*.jpg"))) == 3
-    assert len(list((dst / "train").rglob("*.jpg"))) == 3
+    tests = [sorted(p.name for p in (dst / f"fold{i}" / "test").rglob("*.jpg")) for i in range(3)]
+    assert sorted(name for fold in tests for name in fold) == sorted(f"{n}_{i}.jpg" for n in ("cat", "dog") for i in range(6))
+    assert all(len(fold) == 4 for fold in tests)
+    assert all(len(list((dst / f"fold{i}" / "train").rglob("*.jpg"))) == 8 for i in range(3))
 
 
 def test_to_class_dir_routes_low_score_predictions_to_unlabeled(tmp_path: Path) -> None:
@@ -517,12 +469,8 @@ def test_to_class_dir_routes_low_score_predictions_to_unlabeled(tmp_path: Path) 
         Namespace(
             dst=dst,
             threshold=0.5,
-            hardlink=False,
+            link_mode="copy",
             unlabeled_name="unlabeled",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
-            randomized=False,
         ),
     )
 
@@ -541,12 +489,8 @@ def test_to_class_dir_avoids_filename_collisions(tmp_path: Path) -> None:
         Namespace(
             dst=dst,
             threshold=None,
-            hardlink=False,
+            link_mode="copy",
             unlabeled_name="unlabeled",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
-            randomized=False,
         ),
     )
 
@@ -564,12 +508,8 @@ def test_to_class_dir_supports_hardlinks(tmp_path: Path) -> None:
         Namespace(
             dst=dst,
             threshold=None,
-            hardlink=True,
+            link_mode="hard",
             unlabeled_name="unlabeled",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
-            randomized=False,
         ),
     )
 
@@ -599,12 +539,8 @@ def test_to_class_dir_multi_class_writes_to_all_thresholded_labels(tmp_path: Pat
             dst=dst,
             threshold=0.5,
             multi_class=True,
-            hardlink=False,
+            link_mode="copy",
             unlabeled_name="unlabeled",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
-            randomized=False,
         ),
     )
 
@@ -635,12 +571,8 @@ def test_to_class_dir_multi_class_routes_to_unlabeled_when_none_pass_threshold(t
             dst=dst,
             threshold=0.5,
             multi_class=True,
-            hardlink=False,
+            link_mode="copy",
             unlabeled_name="unlabeled",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
-            randomized=False,
         ),
     )
 
@@ -670,12 +602,8 @@ def test_to_class_dir_multi_class_supports_hardlinks_in_multiple_output_folders(
             dst=dst,
             threshold=0.5,
             multi_class=True,
-            hardlink=True,
+            link_mode="hard",
             unlabeled_name="unlabeled",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
-            randomized=False,
         ),
     )
 
@@ -708,12 +636,8 @@ def test_to_class_dir_multi_class_without_threshold_falls_back_to_single_label(t
             dst=dst,
             threshold=None,
             multi_class=True,
-            hardlink=False,
+            link_mode="copy",
             unlabeled_name="unlabeled",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
-            randomized=False,
         ),
     )
 
@@ -743,12 +667,8 @@ def test_to_class_dir_multi_class_uses_record_threshold_metadata_when_output_thr
             dst=dst,
             threshold=None,
             multi_class=True,
-            hardlink=False,
+            link_mode="copy",
             unlabeled_name="unlabeled",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
-            randomized=False,
         ),
     )
 
@@ -780,12 +700,8 @@ def test_to_class_dir_single_label_winner_ignores_its_own_threshold_once_any_cla
             class_thresholds=None,
             class_threshold=["first=0.50", "second=0.10"],
             multi_class=False,
-            hardlink=False,
+            link_mode="copy",
             unlabeled_name="unlabeled",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
-            randomized=False,
         ),
     )
 
@@ -819,12 +735,8 @@ def test_to_class_dir_multi_class_cli_override_beats_yaml_threshold(tmp_path: Pa
             class_thresholds=thresholds_path,
             class_threshold=["dog=0.80"],
             multi_class=True,
-            hardlink=False,
+            link_mode="copy",
             unlabeled_name="unlabeled",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
-            randomized=False,
         ),
     )
 
@@ -847,13 +759,8 @@ def test_to_class_dir_auto_enables_multi_class_for_multi_class_ingest(tmp_path: 
             class_thresholds=None,
             class_threshold=[],
             multi_class=False,
-            hardlink=False,
+            link_mode="copy",
             unlabeled_name="unlabeled",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
-            randomized=False,
-            preserve_splits=False,
         ),
     )
 
@@ -867,6 +774,7 @@ def test_to_class_dir_multi_class_ingest_keeps_all_copies_in_the_same_split(tmp_
         _write_image(src / "cat" / name)
         _write_image(src / "dog" / name)
     dataset = classify_io.ingest(src, from_hint="multi-class")
+    dataset = run_split(dataset, build_parser(split_command, "split").parse_args(["--val-frac", "0.5", "--tolerance", "1"]))
     dst = tmp_path / "out"
 
     to_class_dir.run(
@@ -877,13 +785,8 @@ def test_to_class_dir_multi_class_ingest_keeps_all_copies_in_the_same_split(tmp_
             class_thresholds=None,
             class_threshold=[],
             multi_class=False,
-            hardlink=False,
+            link_mode="copy",
             unlabeled_name="unlabeled",
-            val_frac=0.5,
-            test_frac=0.0,
-            seed=0,
-            randomized=False,
-            preserve_splits=False,
         ),
     )
 

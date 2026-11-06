@@ -6,15 +6,17 @@ import argparse
 import importlib
 import pkgutil
 import sys
+from functools import partial
 from pathlib import Path
 
-from ..branch_cli import apply_transform_output_hints, build_parser, parse_help, result_to_exit_code, split_rest
+from ..branch_cli import build_parser, parse_help, result_to_exit_code, run_chain, split_rest
+from ..common.io.common import remove_dirs
 from .core import router
 
 OUTPUT_PKG = f"{__package__}.output.commands"
 TRANSFORMS_PKG = f"{__package__}.transform"
 PROG = "cvsuite label"
-TRANSFORM_ALIASES: dict[tuple[str, str], str] = {}
+TRANSFORM_ALIASES: dict[tuple[str, str], str] = {("remap_classes", "run"): "remap-classes"}
 HIDDEN_TRANSFORMS: set[tuple[str, str]] = {
     ("filter", "apply"),
     ("filter", "logistic_opt"),
@@ -69,7 +71,7 @@ def _resolve_command_module(command_name: str):
 def _print_usage() -> None:
     commands = ", ".join(sorted(COMMANDS))
     transforms = ", ".join(sorted(TRANSFORM_COMMANDS)) or "none"
-    print(f"usage: {PROG} <src> [<src> ...] [ingest opts] [<transform> <transform args>] <command> [args]")
+    print(f"usage: {PROG} <src> [<src> ...] [ingest opts] [<transform> <transform args>]... <command> [args]")
     print(f"output commands: {commands}")
     print(f"transforms: {transforms}")
 
@@ -92,7 +94,7 @@ def _infer_target_dir(command_name: str, command_args: argparse.Namespace) -> Pa
     return None
 
 
-def _transform_module(name: str):
+def transform_module(name: str):
     proj, mod_name = TRANSFORM_COMMANDS[name]
     return importlib.import_module(f"{TRANSFORMS_PKG}.{proj}.commands.{mod_name}")
 
@@ -104,7 +106,7 @@ def _dispatch_help(argv: list[str]) -> int:
     known = [t for t in argv if t in COMMANDS or t in TRANSFORM_COMMANDS]
     target = before[-1] if before else (known[0] if known else None)
     if target in TRANSFORM_COMMANDS:
-        return parse_help(build_parser(_transform_module(target), prog=f"{PROG} {target}"), ["-h"])
+        return parse_help(build_parser(transform_module(target), prog=f"{PROG} {target}"), ["-h"])
     if target in COMMANDS:
         return parse_help(build_parser(_resolve_command_module(target), prog=f"{PROG} {target}"), ["-h"])
     _print_usage()
@@ -123,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         default="auto",
     )
     base.add_argument("--keypoints-file", type=Path, help="LabelMe only: optional keypoint ordering spec.")
+    base.add_argument("--images-dir", dest="images_dir", type=Path, action="append", default=[], help="COCO only: a folder that holds the listed images. Repeat for several folders.")
     base.add_argument(
         "--max-depth",
         dest="max_depth",
@@ -141,42 +144,32 @@ def main(argv: list[str] | None = None) -> int:
         _print_usage()
         return 1
 
-    transform_name, transform_args, command_name, command_args = split_rest(rest, COMMANDS, TRANSFORM_COMMANDS)
-    if not command_name or command_name not in COMMANDS:
+    transforms = {name: partial(transform_module, name) for name in TRANSFORM_COMMANDS}
+    steps, command_name, command_args = split_rest(rest, transforms, COMMANDS, prog=PROG)
+    if command_name is None:
         _print_usage()
-        raise SystemExit(f"Unknown command: {command_name!r}" if command_name else "Missing output command.")
+        raise SystemExit("Missing output command.")
 
     command_module = _resolve_command_module(command_name)
-    command_parser = build_parser(command_module, prog=f"{PROG} {command_name}")
-    if any(token in {"-h", "--help"} for token in command_args):
-        return parse_help(command_parser, command_args)
-    parsed_command = command_parser.parse_args(command_args)
+    parsed_command = build_parser(command_module, prog=f"{PROG} {command_name}").parse_args(command_args)
+    target_dir = _infer_target_dir(command_name, parsed_command)
+    if target_dir is not None:
+        for step in steps:
+            setattr(step.args, "target_dir", target_dir)
 
-    parsed_transform = None
-    transform_module = None
-    if transform_name:
-        proj, mod_name = TRANSFORM_COMMANDS[transform_name]
-        transform_module = importlib.import_module(f"{TRANSFORMS_PKG}.{proj}.commands.{mod_name}")
-        transform_parser = build_parser(transform_module, prog=f"{PROG} {transform_name}")
-        if any(token in {"-h", "--help"} for token in transform_args):
-            return parse_help(transform_parser, transform_args)
-        parsed_transform = transform_parser.parse_args(transform_args)
-        target_dir = _infer_target_dir(command_name, parsed_command)
-        if target_dir is not None:
-            setattr(parsed_transform, "target_dir", target_dir)
-        apply_transform_output_hints(PROG, transform_name, parsed_transform, command_name, parsed_command)
-
-    dataset = router.ingest_many(
-        srcs=[Path(token) for token in src_tokens],
-        from_hint=parsed.from_fmt,
-        keypoints_file=parsed.keypoints_file,
-        max_depth=parsed.max_depth,
-    )
-    if transform_module is not None and parsed_transform is not None:
-        dataset = transform_module.run(dataset, parsed_transform)
-
-    result = command_module.run(dataset, parsed_command)
-    return result_to_exit_code(result)
+    cleanup: list[str] = []
+    try:
+        dataset = router.ingest_many(
+            srcs=[Path(token) for token in src_tokens],
+            from_hint=parsed.from_fmt,
+            keypoints_file=parsed.keypoints_file,
+            max_depth=parsed.max_depth,
+            images_dir=parsed.images_dir,
+        )
+        dataset = run_chain(dataset, steps, cleanup=cleanup)
+        return result_to_exit_code(command_module.run(dataset, parsed_command))
+    finally:
+        remove_dirs(cleanup)
 
 
 if __name__ == "__main__":

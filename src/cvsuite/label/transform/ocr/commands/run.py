@@ -9,6 +9,7 @@ from cvsuite.common.core import FMRequest
 from cvsuite.common.fm.core import FMRunner
 from cvsuite.common.fm.providers.registry import format_available_providers
 
+FM = True
 DEFAULT_PROVIDER = "paddleocr"
 
 

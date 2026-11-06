@@ -81,7 +81,7 @@ flowchart LR
 
 Whichever tool you pick, the spine is the same: the source is ingested into a shared `VisionDataset`, transforms mutate that dataset, and an output command materializes it. What differs per tool is the ingest heuristics, which transforms exist, and the export rules.
 
-Each run applies at most one transform, so you stack them by chaining runs: the destination of one becomes the source of the next. FM-backed transforms (`ground`, `ocr`, `infer`, `caption`, `vqa`, and the `gen` actions) hand the dataset to an isolated provider subprocess that mutates records in place. `cvsuite prep` is the exception to all of this, since it works directly on folders and never builds a dataset.
+A run applies any number of transforms, left to right, before the output command: `cvsuite label ./raw sample --count 500 split --val-frac 0.2 to-yolo ./out`. FM-backed transforms (`ground`, `ocr`, `infer`, `caption`, `vqa`, and the `gen` actions) hand the dataset to an isolated provider subprocess that mutates records in place; a chain holds at most one, and it comes first. `cvsuite prep` is the exception to all of this, since it works directly on folders and never builds a dataset.
 
 ## Branches
 

@@ -41,11 +41,13 @@ cvsuite label ./my-yolo-dataset to-coco ./my-dataset
 
 Here `cvsuite label` ingested a YOLO folder (auto-detected), built the in-memory dataset, and `to-coco` wrote it back out as a COCO dataset directory (`<split>/_annotations.coco.json` + images + a helper `data.yaml`). Every output command writes a directory; pass `--no-images` to `to-coco` to write only the annotations.
 
-Add one transform in the middle to change the data before it is written:
+Add transforms in the middle to change the data before it is written; they run left to right:
 
 ```bash
-cvsuite label ./my-yolo-dataset sample --count 200 to-coco ./subset
+cvsuite label ./my-yolo-dataset sample --count 200 split --val-frac 0.2 to-coco ./subset
 ```
+
+`split` assigns the train, val and test splits. Outputs write the splits the records carry, so a converted dataset keeps its own.
 
 `cvsuite prep` is different — it is plain subcommands over folders, with no chaining:
 

@@ -402,7 +402,7 @@ class VQAStyleIO:
         )
 
     @classmethod
-    def write(cls, dataset: VisionDataset, dst: Path, *, hardlink: bool = False, skip_images: bool = False) -> None:
+    def write(cls, dataset: VisionDataset, dst: Path, *, link_mode: str = "copy", skip_images: bool = False) -> None:
         io.ensure_has_vqas(dataset, allow_empty=True)
         images_root = dst / "images"
         dst.mkdir(parents=True, exist_ok=True)
@@ -432,7 +432,7 @@ class VQAStyleIO:
         for record, rel_path in zip(dataset.records, rel_paths):
             src = io.resolve_record_image_path(dataset, record)
             if not skip_images:
-                io.copy_or_link(src, images_root / rel_path, hardlink=hardlink)
+                io.copy_or_link(src, images_root / rel_path, link_mode=link_mode)
 
             qas = [io.qa_to_payload(qa, question_key="prompt") for qa in record.vqas]
             item: dict[str, Any] = {

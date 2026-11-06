@@ -169,5 +169,7 @@ def write_dataset(
     if format not in _WRITERS:
         raise KeyError(f"Unknown or unsupported writer format: {format}")
     writer = _WRITERS[format]
+    if writer_options.get("link_mode") == "sym":
+        common.check_symlinkable(dataset)
     claims = common.OutputClaims.for_dataset(dataset, overwrite=overwrite)
     writer.write(dataset, Path(dst), splits=splits, claims=claims, **writer_options)

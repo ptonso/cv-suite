@@ -28,8 +28,8 @@ def _dataset(tmp_path: Path, n: int = 3) -> VisionDataset:
 
 
 def _ns(dst: Path, **over) -> Namespace:
-    base = dict(dst=dst, val_frac=0.0, test_frac=0.0, seed=0, preserve_splits=False,
-               coco_style=False, no_images=False, hardlink=False, with_stats=False)
+    base = dict(dst=dst, seed=0,
+               coco_style=False, no_images=False, with_stats=False)
     base.update(over)
     return Namespace(**base)
 

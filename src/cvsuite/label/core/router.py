@@ -69,7 +69,7 @@ def detect_format(src: Path, from_hint: str = "auto") -> Fmt:
             return "images"
 
     if path.is_dir():
-        for name in ("data.yaml", "data.yml"):
+        for name in ("data.yaml", "data.yml", "dataset.yaml", "dataset.yml"):
             cfg = path / name
             if cfg.exists():
                 data = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
@@ -193,14 +193,17 @@ def ingest_many(
     task: str = "auto",
     keypoints_file: Optional[Path] = None,
     max_depth: int = -1,
+    images_dir: Optional[Sequence[Path]] = None,
 ) -> VisionDataset:
     if not srcs:
         raise ValueError("At least one source path is required.")
+    if images_dir and "coco" not in {detect_format(src, from_hint) for src in srcs}:
+        raise SystemExit("--images-dir applies to COCO sources, and no source of this run is COCO.")
     if len(srcs) == 1:
-        return ingest(srcs[0], from_hint=from_hint, task=task, keypoints_file=keypoints_file, max_depth=max_depth)
+        return ingest(srcs[0], from_hint=from_hint, task=task, keypoints_file=keypoints_file, max_depth=max_depth, images_dir=images_dir)
 
     datasets = [
-        ingest(src, from_hint=from_hint, task=task, keypoints_file=keypoints_file, max_depth=max_depth)
+        ingest(src, from_hint=from_hint, task=task, keypoints_file=keypoints_file, max_depth=max_depth, images_dir=images_dir)
         for src in srcs
     ]
 
@@ -209,12 +212,13 @@ def ingest_many(
     non_null_tasks = {dataset.task for dataset in datasets if dataset.task is not None}
     merged_task = next(iter(non_null_tasks)) if len(non_null_tasks) == 1 else None
 
-    for dataset in datasets:
+    for src, dataset in zip(srcs, datasets):
+        base = dataset.root or (src.parent if src.is_file() else src)
         for cls_name in dataset.classes:
             _ensure_class_id(merged_classes, str(cls_name))
         for record in dataset.records:
             merged = deepcopy(record)
-            _normalize_record_paths(merged, dataset.root or src)
+            _normalize_record_paths(merged, base)
             _remap_annotation_classes(merged, dataset.classes, merged_classes)
             if merged.classification and merged.classification.label:
                 _ensure_class_id(merged_classes, str(merged.classification.label))
@@ -244,6 +248,7 @@ def ingest(
     task: str = "auto",
     keypoints_file: Optional[Path] = None,
     max_depth: int = -1,
+    images_dir: Optional[Sequence[Path]] = None,
 ) -> VisionDataset:
     fmt = detect_format(src, from_hint)
     dataset = read_dataset(
@@ -252,6 +257,7 @@ def ingest(
         task=_canonical_task_hint(task),
         keypoints_file=keypoints_file,
         max_depth=max_depth,
+        images_dir=list(images_dir or []),
     )
     dataset.meta.setdefault("format", fmt)
     if dataset.source_format is None:

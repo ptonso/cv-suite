@@ -42,13 +42,7 @@ History: [logs/index.md](logs/index.md).
 
 ## Migrations in flight
 
-The specs above describe the target state. The deltas below migrate the code to it, in order. A delta is deleted in the change that lands it.
-
-1. [1-chained-transforms-and-split](delta/1-chained-transforms-and-split.md): chained transforms, `split`, folds, `--link-mode`.
-2. [2-select-remap-and-nested-sampling](delta/2-select-remap-and-nested-sampling.md): `select`, `remap-classes`, nested samplers.
-3. [3-io-edge-fixes](delta/3-io-edge-fixes.md): COCO empty images, polygon boxes, negatives, context crops.
-4. [4-eda-core](delta/4-eda-core.md): the `eda` branch, image table, profile, structure, health.
-5. [5-eda-split-and-leak](delta/5-eda-split-and-leak.md): the split and leak sections.
+None. The specs above describe the code. A migration to a new target state lives in `delta/` until it lands.
 
 ## Contributing without breaking contracts
 

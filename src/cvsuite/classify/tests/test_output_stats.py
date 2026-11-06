@@ -10,6 +10,7 @@ from cvsuite.classify.core import io as classify_io
 from cvsuite.classify.output.commands import to_class_dir
 from cvsuite.common.core import Classification, ImageRecord, Record
 from cvsuite.common.core import VisionDataset
+from cvsuite.common.io.common import resolve_record_image_path
 
 
 def _write_image(path: Path) -> Path:
@@ -39,13 +40,8 @@ def test_to_class_dir_writes_stats_yaml(tmp_path: Path) -> None:
             class_thresholds=None,
             class_threshold=[],
             multi_class=False,
-            hardlink=False,
             unlabeled_name="unlabeled",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
             randomized=False,
-            preserve_splits=False,
             with_stats=True,
         ),
     )
@@ -71,13 +67,8 @@ def test_to_class_dir_stats_auto_enable_multi_class_for_multi_class_ingest(tmp_p
             class_thresholds=None,
             class_threshold=[],
             multi_class=False,
-            hardlink=False,
             unlabeled_name="unlabeled",
-            val_frac=0.0,
-            test_frac=0.0,
-            seed=0,
             randomized=False,
-            preserve_splits=False,
             with_stats=True,
         ),
     )
@@ -86,3 +77,11 @@ def test_to_class_dir_stats_auto_enable_multi_class_for_multi_class_ingest(tmp_p
     assert stats["summary"]["multi_class_enabled"] is True
     assert stats["summary"]["multi_class_records"] == 1
     assert stats["summary"]["assignments_by_output_label"] == {"cat": 1, "dog": 1}
+
+
+def test_multi_class_ingest_of_a_relative_source_resolves_its_images(tmp_path: Path, monkeypatch) -> None:
+    _write_image(tmp_path / "src" / "cat" / "shared.jpg")
+    _write_image(tmp_path / "src" / "dog" / "shared.jpg")
+    monkeypatch.chdir(tmp_path)
+    dataset = classify_io.ingest(Path("src"), from_hint="multi-class")
+    assert all(resolve_record_image_path(dataset, r).is_file() for r in dataset.records)

@@ -7,15 +7,15 @@ These pages are the friendly introduction. For exact behavior and the contracts 
 
 ## The mental model
 
-cvsuite does one shape of work: **take a source on disk, optionally run one transform, write a destination on disk.** Every pipeline branch reads the same way:
+cvsuite does one shape of work: **take a source on disk, optionally run transforms, write a destination on disk.** Every pipeline branch reads the same way:
 
 ```
-cvsuite <branch> <src> [<transform> <transform args>] <output-command> [output args]
+cvsuite <branch> <src> [<transform> <transform args>]... <output-command> [output args]
 ```
 
 - `<branch>` picks the domain: `label`, `class`, `vlm`, `gen`, `prep`, `common`.
 - `<src>` is a file or folder. The branch detects its format unless you pass `--from`.
-- `<transform>` is optional and there is at most one. It mutates the dataset in memory.
+- `<transform>` is optional and repeatable. Transforms run left to right on the dataset in memory. A model-backed one (`ground`, `ocr`, `infer`) comes first and appears once; `vlm` takes one transform.
 - `<output-command>` is required. It writes the result. Output commands are spelled `to-<something>` (`to-coco`, `to-class-dir`, `to-json`, `to-dst`, …).
 
 `cvsuite prep` is the exception: it is plain subcommands (`cvsuite prep arrange`, `cvsuite prep process`, …) that work directly on folders, with no transform/output chaining.

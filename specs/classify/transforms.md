@@ -28,11 +28,11 @@ Builds an `FMRequest(task="classify")`, forwards only `template_prompt` through 
 
 ### sample
 
-Arguments: `--mode {preserve,balance}`; exactly one of `--max-n-per-class` or `--max-frac-per-class`; `--with-replacement`; `--seed`.
+Arguments: `--mode {preserve,balance}`; exactly one of `--max-n-per-class` or `--max-frac-per-class`; `--stratify-by KEY[,KEY...]`; `--with-replacement`; `--seed`.
 
 Reads labels from `record.classification` and reports through the step's `info`: `mode`, `seed`, `with_replacement`, `size_knob` (`max_n_per_class` or `max_frac_per_class`), `size_value`, `targets`, `class_sizes`, `sample_size`.
 
-Without replacement, records are ranked within each class by [nested sampling](../common/sampling.md), so for one seed a smaller target selects a subset of what a larger one selects.
+Without replacement, records are ranked within each class by [nested sampling](../common/sampling.md), so for one seed a smaller target selects a subset of what a larger one selects. With `--stratify-by` the whole procedure runs inside each [stratum](../common/sampling.md#strata): the class sizes, `max_class_size`, `min_class_size` and the targets below are those of the stratum. `--stratify-by split` therefore keeps the class proportions of every split.
 
 ### split, select, remap-classes
 
@@ -56,10 +56,11 @@ Effective label selection prefers `classification.probs`. Global, per-class and 
 - `infer` MUST clear the multi-class ingest mode before inference, so the dataset becomes a standard inferable class dataset.
 - List-like `--prompt` MUST contain the `<class>` template token through `--template-prompt`.
 - `sample` MUST reject annotated datasets (use `cvsuite label sample`), datasets with active multi-class ingest (sampling is single-label only), unlabeled datasets (use `cvsuite prep sample`), and datasets that already carry annotations.
-- `sample` without replacement MUST error if any target exceeds its class size.
+- `sample` without replacement MUST error if any target exceeds its class size, in its stratum.
 - Fraction targets floor their counts; the formulas above give the minimums.
 
 ## History
 
 - [What belongs in cvsuite](../logs/2026-11-05_what-belongs-in-cvsuite.md): why `split`, `select` and `remap-classes` are shared with `label`.
+- [Gaps found by migrating the projects](../logs/2026-11-06_migration-gaps.md): why `sample` takes strata.
 - [Chained transforms and split as a transform](../logs/2026-11-05_chained-transforms-and-split.md): why `class` splits as a transform and `sample` lost `--hardlink`.

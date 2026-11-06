@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,11 @@ class DataYaml:
     task_raw: str | None = None
 
 
+def _absolute(path: Path) -> Path:
+    """Normalize without following symlinks, so a symlinked split folder stays under the dataset root."""
+    return Path(os.path.abspath(path))
+
+
 def _resolve_yaml_root(path: Path, data: dict[str, Any]) -> Path:
     base = path.parent
     root_field = data.get("path")
@@ -47,7 +53,7 @@ def _resolve_yaml_root(path: Path, data: dict[str, Any]) -> Path:
     root_path = Path(str(root_field))
     if root_path.is_absolute():
         return root_path
-    candidate = (base / root_path).resolve()
+    candidate = _absolute(base / root_path)
     return candidate if candidate.exists() else base
 
 
@@ -60,16 +66,16 @@ def _resolve_split_paths(yaml_path: Path, base_root: Path, data: dict[str, Any])
             return path
         alt_key = {"val": "valid", "valid": "val"}.get(key)
         candidates = [
-            (yaml_dir / path).resolve(),
-            (base_root / path).resolve(),
-            (yaml_dir / key / "images").resolve(),
-            (base_root / key / "images").resolve(),
+            _absolute(yaml_dir / path),
+            _absolute(base_root / path),
+            _absolute(yaml_dir / key / "images"),
+            _absolute(base_root / key / "images"),
         ]
         if alt_key:
             candidates.extend(
                 [
-                    (yaml_dir / alt_key / "images").resolve(),
-                    (base_root / alt_key / "images").resolve(),
+                    _absolute(yaml_dir / alt_key / "images"),
+                    _absolute(base_root / alt_key / "images"),
                 ]
             )
         for candidate in candidates:
@@ -88,13 +94,26 @@ def _resolve_split_paths(yaml_path: Path, base_root: Path, data: dict[str, Any])
     return splits
 
 
+def _class_names(raw: object, path: Path) -> list[str]:
+    """`names` as a list, or as the Ultralytics index-to-name mapping."""
+    if isinstance(raw, dict):
+        try:
+            indexed = {int(key): str(value) for key, value in raw.items()}
+        except ValueError as exc:
+            raise ValueError(f"`names` in {path} must map integer indices to names: {exc}") from exc
+        if sorted(indexed) != list(range(len(indexed))):
+            raise ValueError(f"`names` in {path} must use the indices 0..{len(indexed) - 1}, got {sorted(indexed)}.")
+        return [indexed[i] for i in range(len(indexed))]
+    return [str(item) for item in raw or []]
+
+
 def _read_data_yaml(path: Path) -> DataYaml:
     data = common.read_yaml(path) or {}
     if not isinstance(data, dict):
         raise ValueError(f"YOLO data yaml must parse to an object: {path}")
     task_raw = str(data.get("task")).lower() if data.get("task") is not None else None
     task = common.canonical_task_id(task_raw, allow_auto=False) if task_raw is not None else None
-    names = [str(item) for item in data.get("names", [])]
+    names = _class_names(data.get("names", []), path)
     root = _resolve_yaml_root(path, data)
     splits = _resolve_split_paths(path, root, data)
     return DataYaml(path=path, task=task, names=names, root=root, splits=splits, raw=data, task_raw=task_raw)
@@ -544,7 +563,7 @@ class YoloAdapter:
         return False
 
     @classmethod
-    def _detect_tasks(cls, dataset: VisionDataset) -> list[str]:
+    def _detect_tasks(cls, dataset: VisionDataset, *, boxes_from_polygons: bool = False) -> list[str]:
         tasks: list[str] = []
 
         def add(task_name: str) -> None:
@@ -552,7 +571,7 @@ class YoloAdapter:
                 tasks.append(task_name)
 
         for record in dataset.records:
-            if any(box.kind not in {"pose", "seg"} for box in record.boxes):
+            if any(box.kind not in {"pose", "seg"} for box in record.boxes) or (boxes_from_polygons and record.polys):
                 add("det")
             if record.polys:
                 add("inst-seg")
@@ -585,7 +604,8 @@ class YoloAdapter:
         tree: dict[str, Path],
         *,
         task: str,
-        hardlink: bool,
+        link_mode: str,
+        boxes_from_polygons: bool,
         name: tuple[str, str] | None,
         write_vqa: bool,
         dataset: VisionDataset,
@@ -603,10 +623,7 @@ class YoloAdapter:
         if not img_dst.exists():
             if src.suffix.lower() not in common.IMG_EXTS:
                 raise ValueError(f"Unsupported image extension for YOLO export: {src}")
-            if hardlink:
-                common.copy_or_link(src, img_dst, hardlink=True)
-            else:
-                img_dst.write_bytes(src.read_bytes())
+            common.copy_or_link(src, img_dst, link_mode=link_mode)
 
         lines: list[str] = []
         if task == "det":
@@ -614,6 +631,11 @@ class YoloAdapter:
                 if box.kind in {"pose", "seg"}:
                     continue
                 lines.append(f"{box.cls} {box.cx:.6f} {box.cy:.6f} {box.w:.6f} {box.h:.6f}")
+            if boxes_from_polygons:
+                for poly in record.polys:
+                    xs, ys = [min(max(p[0], 0.0), 1.0) for p in poly.points], [min(max(p[1], 0.0), 1.0) for p in poly.points]
+                    w, h = max(xs) - min(xs), max(ys) - min(ys)
+                    lines.append(f"{poly.cls} {min(xs) + w / 2:.6f} {min(ys) + h / 2:.6f} {w:.6f} {h:.6f}")
         elif task == "inst-seg":
             for poly in record.polys:
                 flat = " ".join(f"{x:.6f} {y:.6f}" for x, y in poly.points)
@@ -638,7 +660,8 @@ class YoloAdapter:
         *,
         splits: list[str] | None = None,
         task: str | None = None,
-        hardlink: bool = False,
+        link_mode: str = "copy",
+        boxes_from_polygons: bool = False,
         claims: common.OutputClaims | None = None,
         **options: object,
     ) -> None:
@@ -646,7 +669,7 @@ class YoloAdapter:
         dst.mkdir(parents=True, exist_ok=True)
         target_splits = {common.canonical_split_id(item) for item in splits} if splits else None
         has_vqa = cls._dataset_has_vqa(dataset, target_splits)
-        tasks = cls._detect_tasks(dataset)
+        tasks = cls._detect_tasks(dataset, boxes_from_polygons=boxes_from_polygons)
         default_task = cls._resolve_default_label_task(tasks, dataset.task, task)
         first = True
         names: dict[int, tuple[str, str]] = {}
@@ -664,7 +687,8 @@ class YoloAdapter:
                     record,
                     cache[split],
                     task=current_task,
-                    hardlink=hardlink,
+                    link_mode=link_mode,
+                    boxes_from_polygons=boxes_from_polygons,
                     name=names.get(index),
                     write_vqa=first,
                     dataset=dataset,

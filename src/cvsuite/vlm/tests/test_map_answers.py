@@ -85,7 +85,7 @@ def test_match_answer_text_routes_hedged_and_ambiguous_outputs_to_unclear() -> N
     assert answer_mapping.match_answer_text("A or B", abc).label == "unclear"
 
 
-def test_vlm_cli_map_answers_to_json_partitions_and_hardlinks(tmp_path: Path) -> None:
+def test_vlm_cli_map_answers_to_json_partitions_and_hard_links(tmp_path: Path) -> None:
     src = tmp_path / "flat"
     _write_flat_sample(
         src,
@@ -97,7 +97,7 @@ def test_vlm_cli_map_answers_to_json_partitions_and_hardlinks(tmp_path: Path) ->
     )
 
     dst = tmp_path / "mapped_json"
-    exit_code = vlm_cli.main([str(src), "map-answers", "YES", "NO", "to-json", str(dst), "--hardlink"])
+    exit_code = vlm_cli.main([str(src), "map-answers", "YES", "NO", "to-json", str(dst), "--link-mode", "hard"])
 
     assert exit_code == 0
     assert sorted(path.name for path in dst.iterdir()) == ["NO", "YES", "unclear"]

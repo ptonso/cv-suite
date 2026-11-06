@@ -193,7 +193,7 @@ class FlatVlmJsonAdapter:
         dst: Path,
         *,
         splits: list[str] | None = None,
-        hardlink: bool = False,
+        link_mode: str = "copy",
         skip_images: bool = False,
         **options: object,
     ) -> None:
@@ -225,6 +225,6 @@ class FlatVlmJsonAdapter:
             if json_dst.exists():
                 raise FileExistsError(f"Destination already exists: {json_dst}")
             if not skip_images:
-                common.copy_or_link(src, img_dst, hardlink=hardlink)
+                common.copy_or_link(src, img_dst, link_mode=link_mode)
             payload = _sidecar_payload(record, sample_key=sample_key, image_filename=preferred_name)
             json_dst.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

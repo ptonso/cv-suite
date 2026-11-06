@@ -9,6 +9,9 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List
 
+from cvsuite.common.keys import record_keys
+from cvsuite.common.sampling import strata, stratum_values, take
+
 from ...core import io
 
 
@@ -33,14 +36,15 @@ def attach(parser: argparse.ArgumentParser) -> None:
         help="Per-class fraction cap for sampling. Must satisfy 0 < F <= 1.",
     )
     parser.add_argument(
+        "--stratify-by",
+        default=None,
+        metavar="KEY[,KEY...]",
+        help="Sample inside each group of records that share these keys (split, dir:N, regex:PATTERN, attr:NAME, file:PATH.csv). Class sizes and targets are those of the group.",
+    )
+    parser.add_argument(
         "--with-replacement",
         action="store_true",
         help="Allow duplicate sampling within a class when computed targets exceed available images.",
-    )
-    parser.add_argument(
-        "--hardlink",
-        action="store_true",
-        help="Request hard-linked image export when the output command supports it.",
     )
     parser.add_argument("--seed", type=int, default=0, help="Seed used for deterministic sampling.")
 
@@ -137,7 +141,7 @@ def _compute_targets(labels: list[str], by_label: Dict[str, List[object]], args:
     return targets
 
 
-def _sample_bucket(bucket: List[object], *, target: int, with_replacement: bool, rng: random.Random, label: str) -> list[object]:
+def _sample_bucket(bucket: List[object], *, target: int, with_replacement: bool, rng: random.Random, seed: int, key, label: str) -> list[object]:
     size = len(bucket)
     if not with_replacement and target > size:
         raise SystemExit(
@@ -146,24 +150,18 @@ def _sample_bucket(bucket: List[object], *, target: int, with_replacement: bool,
         )
     if with_replacement:
         return [bucket[rng.randrange(size)] for _ in range(target)]
-    shuffled = list(bucket)
-    rng.shuffle(shuffled)
-    return shuffled[:target]
+    return [bucket[i] for i in take([key(r) for r in bucket], seed, target)]
 
 
-def run(dataset, args: argparse.Namespace):
-    _validate_inputs(dataset, args)
-
+def _sample_stratum(dataset, records: list, args: argparse.Namespace, keys: dict, rng: random.Random, prefix: str):
     by_label: Dict[str, List[object]] = {}
-    for record in dataset.records:
+    for record in records:
         label = _record_label(record)
         assert label is not None
         by_label.setdefault(label, []).append(record)
-
-    rng = random.Random(int(getattr(args, "seed", 0)))
     labels = _ordered_labels(dataset, set(by_label))
     targets = _compute_targets(labels, by_label, args)
-
+    seed = int(getattr(args, "seed", 0))
     selected: list[object] = []
     for label in labels:
         selected.extend(
@@ -172,28 +170,46 @@ def run(dataset, args: argparse.Namespace):
                 target=targets[label],
                 with_replacement=bool(getattr(args, "with_replacement", False)),
                 rng=rng,
-                label=label,
+                seed=seed,
+                key=lambda record: keys[id(record)],
+                label=prefix + label,
             )
         )
-    rng.shuffle(selected)
+    return selected, {prefix + label: targets[label] for label in labels}, {prefix + label: len(by_label[label]) for label in labels}
+
+
+def run(dataset, args: argparse.Namespace):
+    _validate_inputs(dataset, args)
+
+    seed = int(getattr(args, "seed", 0))
+    keys = dict(zip(map(id, dataset.records), record_keys(dataset)))
+    rng = random.Random(seed)
+    spec = getattr(args, "stratify_by", None)
+    values = stratum_values(dataset, spec)
+
+    selected: list[object] = []
+    targets: dict[str, int] = {}
+    class_sizes: dict[str, int] = {}
+    for members in strata(values):
+        prefix = "|".join(values[members[0]]) + "/" if spec else ""
+        picked, stratum_targets, stratum_sizes = _sample_stratum(dataset, [dataset.records[i] for i in members], args, keys, rng, prefix)
+        selected.extend(picked)
+        targets.update(stratum_targets)
+        class_sizes.update(stratum_sizes)
 
     meta = dict(dataset.meta)
     knob_name = "max_n_per_class" if getattr(args, "max_n_per_class", None) is not None else "max_frac_per_class"
     knob_value = getattr(args, knob_name)
-    meta["sample"] = {
-        "mode": str(getattr(args, "mode", "preserve")),
-        "seed": int(getattr(args, "seed", 0)),
-        "with_replacement": bool(getattr(args, "with_replacement", False)),
-        "hardlink": bool(getattr(args, "hardlink", False)),
+    meta["step_info"] = {
         "size_knob": knob_name,
         "size_value": knob_value,
-        "targets": dict(targets),
-        "class_sizes": {label: len(by_label[label]) for label in labels},
+        "targets": targets,
+        "class_sizes": class_sizes,
         "sample_size": len(selected),
     }
     return replace(
         dataset,
         records=list(selected),
-        classes=_ordered_labels(dataset, set(targets)),
+        classes=_ordered_labels(dataset, {label for label in (_record_label(r) for r in selected) if label}),
         meta=meta,
     )

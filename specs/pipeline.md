@@ -46,8 +46,8 @@ A transform that creates temporary files appends their folders to `dataset.meta[
 
 - `build_parser(module, prog)`: builds an `ArgumentParser` from a command module's `attach()` and docstring.
 - `parse_help(parser, argv)`: triggers the parser's help path and returns `0`; re-raises non-help exits.
-- `split_rest(rest, transforms, commands, *, max_transforms=None)`: returns the transform steps as `(name, parsed_args)` pairs, the output command name and its raw arguments, or `([], None, rest)` when no output command is present. It enforces the chain rules above and `max_transforms`.
-- `run_chain(dataset, steps)`: runs the transforms in order and records the steps.
+- `split_rest(rest, transforms, commands, *, prog="cvsuite", max_transforms=None)`: `transforms` maps a name to a callable returning its module, so only the named modules are imported. Returns the transform steps as `Step(name, args, module)` tuples, the output command name and its raw arguments, or `(steps, None, [])` when no output command is present. It enforces the chain rules above and `max_transforms`.
+- `run_chain(dataset, steps, *, cleanup)`: runs the transforms in order, records the steps, and collects every folder listed in `cleanup_dirs` into the `cleanup` list. The branch removes that list in a `finally` (`remove_dirs`).
 
 `class`, `label`, `vlm` and `eda` use `split_rest`. `gen` uses `build_parser` and `parse_help` and keeps a local two-stage split.
 

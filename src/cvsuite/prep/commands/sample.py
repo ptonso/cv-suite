@@ -64,7 +64,8 @@ def register_subcommand(subparsers: argparse._SubParsersAction[argparse.Argument
     parser.add_argument(
         "--seed",
         type=int,
-        help="Random seed for reproducible sampling.",
+        default=0,
+        help="Seed of the sampling rank (default 0). A smaller sample is a subset of a larger one for one seed.",
     )
     parser.add_argument(
         "--hardlink",
