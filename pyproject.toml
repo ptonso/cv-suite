@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cv-suite"
-version = "0.0.1"
+version = "0.1.0"
 description = "Unified computer vision toolkit with shared FM runtime and branch-owned I/O."
 readme = "README.md"
 requires-python = ">=3.10"
