@@ -1,13 +1,14 @@
-"""Gen branch: run generation actions, then materialize the generated image."""
+"""Image generation: create images from text prompts or edit existing images with diffusion models, then write them."""
 
 from __future__ import annotations
 
 import importlib
 import pkgutil
 import sys
+from functools import partial
 from typing import Optional
 
-from ..branch_cli import build_parser, parse_help, result_to_exit_code
+from ..branch_cli import MODEL_NOTE, build_parser, parse_help, print_branch_help, result_to_exit_code
 
 ACTIONS_PKG = f"{__package__}.transform.commands"
 OUTPUT_PKG = f"{__package__}.output.commands"
@@ -34,16 +35,41 @@ def _iter_outputs() -> dict[str, str]:
     return out
 
 
+def _action_module(name: str):
+    return importlib.import_module(f"{ACTIONS_PKG}.{ACTION_COMMANDS[name]}")
+
+
+def _output_module(name: str):
+    return importlib.import_module(f"{OUTPUT_PKG}.{OUTPUT_COMMANDS[name]}")
+
+
 ACTION_COMMANDS = _iter_actions()
 OUTPUT_COMMANDS = _iter_outputs()
 
 
+USAGE = f"usage: {PROG} <action> [action args] <output-command> [args]"
+EXAMPLES = [
+    'cvsuite gen create --provider flux --prompt "a red fox in the snow" to-dst ./fox.png',
+    "cvsuite gen create --provider flux --prompt prompts.yaml --num-images 4 to-dst ./out-dir",
+    'cvsuite gen edit ./photos --provider qwen_image_edit --prompt "make it night, keep the layout" to-dst ./edited',
+]
+SUMMARY = (
+    "Runs one generation action and writes its images with `to-dst`. `create` builds images from prompts and\n"
+    "reads no source. `edit` takes a source image or dataset (any `label` format) as its first argument."
+)
+
+
 def _print_usage() -> None:
-    actions = ", ".join(sorted(ACTION_COMMANDS)) or "none"
-    outputs = ", ".join(sorted(OUTPUT_COMMANDS)) or "none"
-    print(f"usage: {PROG} <action> [action args] <output-command> [args]")
-    print(f"actions: {actions}")
-    print(f"output commands: {outputs}")
+    print_branch_help(
+        USAGE,
+        SUMMARY,
+        transforms={name: partial(_action_module, name) for name in ACTION_COMMANDS},
+        commands={name: partial(_output_module, name) for name in OUTPUT_COMMANDS},
+        examples=EXAMPLES,
+        notes=[MODEL_NOTE],
+        hint=f"flags of one command: {PROG} <action> --help, {PROG} to-dst --help",
+        transform_title="actions",
+    )
 
 
 def _split_output(rest: list[str]) -> tuple[list[str], str | None, list[str]]:

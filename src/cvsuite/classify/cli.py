@@ -1,4 +1,4 @@
-"""Class branch: ingest image datasets, optionally transform them, and write class directories."""
+"""Class-folder datasets: sort images into class folders with zero-shot classifiers, sample, split, and rewrite class trees."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import sys
 from functools import partial
 from pathlib import Path
 
-from ..branch_cli import build_parser, parse_help, result_to_exit_code, run_chain, split_rest
+from ..branch_cli import build_parser, help_target, parse_help, print_branch_help, result_to_exit_code, run_chain, split_rest
 from ..common.io.common import remove_dirs
 from .core import io
 
@@ -42,35 +42,62 @@ COMMANDS = _iter_output_commands()
 TRANSFORM_COMMANDS = _iter_transform_commands()
 
 
+USAGE = f"usage: {PROG} <src> [ingest opts] [<transform> <transform args>]... <command> [args]"
+EXAMPLES = [
+    'cvsuite class ./images infer --provider clip --prompt "good,bad" to-class-dir ./sorted',
+    "cvsuite class ./sorted sample --max-n-per-class 100 split --val-frac 0.2 to-class-dir ./subset",
+]
+SUMMARY = (
+    "Reads an image folder or a class-folder tree (one folder per class), runs the transforms left to right on\n"
+    "one in-memory dataset, and writes class folders with `to-class-dir`. For annotated datasets use\n"
+    "`cvsuite label`. An output refuses a destination that already holds files unless --overwrite."
+)
+
+
+def build_ingest_parser() -> argparse.ArgumentParser:
+    base = argparse.ArgumentParser(add_help=False, prog=PROG, allow_abbrev=False, usage=argparse.SUPPRESS)
+    base.add_argument("src", nargs="?", help="Source folder.")
+    group = base.add_argument_group("ingest options")
+    group.add_argument(
+        "--from",
+        dest="from_fmt",
+        choices=["auto", "images", "unstructured", "multi-class"],
+        default="auto",
+        help="Source format (default auto). images: a plain image folder; unstructured: one folder per class; "
+        "multi-class: class folders where one image sits in several, merged by file name.",
+    )
+    return base
+
+
 def _print_usage() -> None:
-    commands = ", ".join(sorted(COMMANDS)) or "none"
-    transforms = ", ".join(sorted(TRANSFORM_COMMANDS)) or "none"
-    print(f"usage: {PROG} <src> [ingest opts] [<transform> <transform args>]... <command> [args]")
-    print("ingest opts:")
-    print("  --from {auto,images,unstructured,multi-class}")
-    print("formats: auto, images, unstructured, multi-class")
-    print(f"output commands: {commands}")
-    print(f"transforms: {transforms}")
+    print_branch_help(
+        USAGE,
+        SUMMARY,
+        ingest=build_ingest_parser(),
+        transforms={name: partial(_transform_module, name) for name in TRANSFORM_COMMANDS},
+        commands={name: partial(_output_module, name) for name in COMMANDS},
+        examples=EXAMPLES,
+        hint=f"flags of one command: {PROG} <src> <command> --help (any path works as <src>)",
+    )
 
 
 def _transform_module(name: str):
     return importlib.import_module(f"{TRANSFORMS_PKG}.{TRANSFORM_COMMANDS[name]}")
 
 
+def _output_module(name: str):
+    return importlib.import_module(f"{OUTPUT_PKG}.{COMMANDS[name]}")
+
+
 def _dispatch_help(argv: list[str]) -> int:
     """Route `--help` to the most specific transform/command parser named in argv."""
-    help_pos = next(i for i, t in enumerate(argv) if t in {"-h", "--help"})
-    before = [t for t in argv[:help_pos] if t in COMMANDS or t in TRANSFORM_COMMANDS]
-    known = [t for t in argv if t in COMMANDS or t in TRANSFORM_COMMANDS]
-    target = before[-1] if before else (known[0] if known else None)
-    if target in TRANSFORM_COMMANDS:
-        module = importlib.import_module(f"{TRANSFORMS_PKG}.{TRANSFORM_COMMANDS[target]}")
-        return parse_help(build_parser(module, prog=f"{PROG} {target}"), ["-h"])
-    if target in COMMANDS:
-        module = importlib.import_module(f"{OUTPUT_PKG}.{COMMANDS[target]}")
-        return parse_help(build_parser(module, prog=f"{PROG} {target}"), ["-h"])
-    _print_usage()
-    return 0
+    target = help_target(argv, [*COMMANDS, *TRANSFORM_COMMANDS])
+    if target is None:
+        _print_usage()
+        return 0
+    name, sub = target
+    module = _transform_module(name) if name in TRANSFORM_COMMANDS else _output_module(name)
+    return parse_help(build_parser(module, prog=f"{PROG} {name}"), [*sub, "-h"])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -78,10 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     if any(token in {"-h", "--help"} for token in argv):
         return _dispatch_help(argv)
 
-    base = argparse.ArgumentParser(add_help=False, prog=PROG, allow_abbrev=False)
-    base.add_argument("src", nargs="?")
-    base.add_argument("--from", dest="from_fmt", choices=["auto", "images", "unstructured", "multi-class"], default="auto")
-
+    base = build_ingest_parser()
     parsed, rest = base.parse_known_args(argv)
     if not parsed.src:
         _print_usage()

@@ -54,8 +54,8 @@ def discover_commands(package_name: str) -> list[CommandSpec]:
     return [discovered[name] for name in sorted(discovered)]
 
 
-def build_generic_parser(package_name: str, prog: str, description: str) -> tuple[argparse.ArgumentParser, list[CommandSpec]]:
-    parser = argparse.ArgumentParser(prog=prog, description=description)
+def build_generic_parser(package_name: str, prog: str, description: str, epilog: str | None = None) -> tuple[argparse.ArgumentParser, list[CommandSpec]]:
+    parser = argparse.ArgumentParser(prog=prog, description=description, epilog=epilog, formatter_class=argparse.RawDescriptionHelpFormatter)
     specs = discover_commands(package_name)
     if not specs:
         return parser, specs
@@ -78,8 +78,8 @@ def result_to_exit_code(result: Any) -> int:
     return int(result)
 
 
-def run_generic_branch(package_name: str, prog: str, description: str, argv: list[str] | None = None) -> int:
-    parser, specs = build_generic_parser(package_name, prog=prog, description=description)
+def run_generic_branch(package_name: str, prog: str, description: str, argv: list[str] | None = None, epilog: str | None = None) -> int:
+    parser, specs = build_generic_parser(package_name, prog=prog, description=description, epilog=epilog)
     if not specs:
         parser.parse_args(argv)
         parser.print_help()
@@ -134,6 +134,74 @@ def parse_help(parser: argparse.ArgumentParser, argv: list[str]) -> int:
             return 0
         raise
     return 0
+
+
+def help_target(argv: list[str], names: Iterable[str]) -> tuple[str, list[str]] | None:
+    """The command that `--help` asks about, and the subcommand token right after it, if any.
+
+    `--help` belongs to the last command named before it, or to the first command named anywhere when none
+    precedes it. A token between the command and `--help` that is not an option names a subcommand of a
+    namespace command (`ops rebox --help`).
+    """
+    names = set(names)
+    help_pos = next(i for i, t in enumerate(argv) if t in {"-h", "--help"})
+    named = [(i, t) for i, t in enumerate(argv) if t in names]
+    before = [(i, t) for i, t in named if i < help_pos]
+    if not before:
+        return (named[0][1], []) if named else None
+    index, name = before[-1]
+    follower = argv[index + 1 : min(index + 2, help_pos)]
+    return name, [t for t in follower if not t.startswith("-")]
+
+
+def print_branch_help(
+    usage: str,
+    summary: str,
+    *,
+    transforms: dict[str, Callable[[], Any]],
+    commands: dict[str, Callable[[], Any]],
+    examples: list[str],
+    ingest: argparse.ArgumentParser | None = None,
+    notes: Iterable[str] = (),
+    hint: str,
+    transform_title: str = "transforms",
+    command_title: str = "output commands",
+) -> None:
+    """Print the help of a pipeline branch: usage, ingest options, one line per command, notes and examples.
+
+    `transforms` and `commands` map a command name to a callable returning its module. The line of a
+    command is the first line of its docstring, tagged `[model]` when the module sets `FM = True`.
+    `hint` says how to reach the flags of one command.
+    """
+
+    loaded = {name: getter() for name, getter in {**transforms, **commands}.items()}
+
+    def rows(title: str, names: Iterable[str]) -> str:
+        lines = [f"{title}:"]
+        for name in sorted(names):
+            doc = (loaded[name].__doc__ or "").strip().splitlines()
+            tag = " [model]" if getattr(loaded[name], "FM", False) else ""
+            lines.append(f"  {name:<22}{doc[0] if doc else ''}{tag}")
+        return "\n".join(lines)
+
+    blocks = [usage, summary]
+    if ingest is not None:
+        blocks.append(ingest.format_help().rstrip())
+    if transforms:
+        blocks.append(rows(transform_title, transforms))
+    blocks.append(rows(command_title, commands))
+    if any(getattr(loaded[name], "FM", False) for name in transforms):
+        blocks.append(MODEL_NOTE)
+    blocks.extend(notes)
+    blocks.append(hint)
+    blocks.append("examples:\n" + "\n".join(f"  {line}" for line in examples))
+    print("\n\n".join(blocks))
+
+
+MODEL_NOTE = (
+    "Commands that run a foundation model do so in an isolated environment. The first use of a provider builds it\n"
+    "and downloads its weights (gigabytes); `cvsuite common cache-path` shows where they go."
+)
 
 
 def split_rest(

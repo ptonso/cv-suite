@@ -1,4 +1,4 @@
-"""Label branch: ingest annotated datasets, apply optional transforms, and export results."""
+"""Annotated datasets: read YOLO, COCO, LabelMe, image or class folders and masks, auto-label, transform, and write any label format."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import sys
 from functools import partial
 from pathlib import Path
 
-from ..branch_cli import build_parser, parse_help, result_to_exit_code, run_chain, split_rest
+from ..branch_cli import build_parser, help_target, parse_help, print_branch_help, result_to_exit_code, run_chain, split_rest
 from ..common.io.common import remove_dirs
 from .core import router
 
@@ -68,12 +68,55 @@ def _resolve_command_module(command_name: str):
     return importlib.import_module(f"{OUTPUT_PKG}.{COMMANDS[command_name]}")
 
 
+USAGE = "usage: cvsuite label <src> [<src> ...] [ingest opts] [<transform> <transform args>]... <command> [args]"
+EXAMPLES = [
+    "cvsuite label ./yolo to-coco ./coco",
+    'cvsuite label ./images ground --provider gdino --prompt "car,person" split --val-frac 0.2 to-yolo ./out',
+    "cvsuite label ./raw select --min-box-px 20 --empty drop sample --count 500 to-results ./preview",
+]
+SUMMARY = (
+    "Reads one or more sources (several sources merge by class name), runs the transforms left to right on one\n"
+    "in-memory dataset, and writes it with exactly one output command. Split with `split` before writing, since\n"
+    "outputs keep the splits the records carry. An output refuses a destination that already holds files unless\n"
+    "--overwrite. `inspect` opens a window; `audit` and `to-results` work without a display."
+)
+
+
+def build_ingest_parser(prog: str) -> argparse.ArgumentParser:
+    """The source options shared by `label` and `eda`, rendered by `--help` and used to parse them."""
+    base = argparse.ArgumentParser(add_help=False, prog=prog, allow_abbrev=False, usage=argparse.SUPPRESS)
+    group = base.add_argument_group("ingest options")
+    group.add_argument(
+        "--from",
+        dest="from_fmt",
+        choices=["auto", "yolo", "labelme", "coco", "images", "class-dir", "semseg-mask"],
+        default="auto",
+        help="Source format (default auto). auto detects it and fails on an ambiguous folder. "
+        "images: a plain image folder; class-dir: one folder per class; semseg-mask: images plus mask files.",
+    )
+    group.add_argument("--keypoints-file", type=Path, help="LabelMe only: optional keypoint ordering spec.")
+    group.add_argument("--images-dir", dest="images_dir", type=Path, action="append", default=[], help="COCO only: a folder that holds the listed images. Repeat for several folders.")
+    group.add_argument(
+        "--max-depth",
+        dest="max_depth",
+        type=int,
+        default=-1,
+        help="Limit recursion into source dirs (flat/class-dir readers). "
+        "-1 = unlimited (default); 0 = only files directly in the source dir.",
+    )
+    return base
+
+
 def _print_usage() -> None:
-    commands = ", ".join(sorted(COMMANDS))
-    transforms = ", ".join(sorted(TRANSFORM_COMMANDS)) or "none"
-    print(f"usage: {PROG} <src> [<src> ...] [ingest opts] [<transform> <transform args>]... <command> [args]")
-    print(f"output commands: {commands}")
-    print(f"transforms: {transforms}")
+    print_branch_help(
+        USAGE,
+        SUMMARY,
+        ingest=build_ingest_parser(PROG),
+        transforms={name: partial(transform_module, name) for name in TRANSFORM_COMMANDS},
+        commands={name: partial(_resolve_command_module, name) for name in COMMANDS},
+        examples=EXAMPLES,
+        hint=f"flags of one command: {PROG} <src> <command> --help (any path works as <src>; namespaces take a subcommand: {PROG} . ops rebox --help)",
+    )
 
 
 def _split_sources_and_rest(argv: list[str]) -> tuple[list[str], list[str]]:
@@ -101,39 +144,20 @@ def transform_module(name: str):
 
 def _dispatch_help(argv: list[str]) -> int:
     """Route `--help` to the most specific transform/command parser named in argv."""
-    help_pos = next(i for i, t in enumerate(argv) if t in {"-h", "--help"})
-    before = [t for t in argv[:help_pos] if t in COMMANDS or t in TRANSFORM_COMMANDS]
-    known = [t for t in argv if t in COMMANDS or t in TRANSFORM_COMMANDS]
-    target = before[-1] if before else (known[0] if known else None)
-    if target in TRANSFORM_COMMANDS:
-        return parse_help(build_parser(transform_module(target), prog=f"{PROG} {target}"), ["-h"])
-    if target in COMMANDS:
-        return parse_help(build_parser(_resolve_command_module(target), prog=f"{PROG} {target}"), ["-h"])
-    _print_usage()
-    return 0
+    target = help_target(argv, [*COMMANDS, *TRANSFORM_COMMANDS])
+    if target is None:
+        _print_usage()
+        return 0
+    name, sub = target
+    module = transform_module(name) if name in TRANSFORM_COMMANDS else _resolve_command_module(name)
+    return parse_help(build_parser(module, prog=f"{PROG} {name}"), [*sub, "-h"])
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     wants_help = any(token in {"-h", "--help"} for token in argv)
 
-    base = argparse.ArgumentParser(add_help=False, prog=PROG, allow_abbrev=False)
-    base.add_argument(
-        "--from",
-        dest="from_fmt",
-        choices=["auto", "yolo", "labelme", "coco", "images", "class-dir", "semseg-mask"],
-        default="auto",
-    )
-    base.add_argument("--keypoints-file", type=Path, help="LabelMe only: optional keypoint ordering spec.")
-    base.add_argument("--images-dir", dest="images_dir", type=Path, action="append", default=[], help="COCO only: a folder that holds the listed images. Repeat for several folders.")
-    base.add_argument(
-        "--max-depth",
-        dest="max_depth",
-        type=int,
-        default=-1,
-        help="Limit recursion into source dirs (flat/class-dir readers). "
-        "-1 = unlimited (default); 0 = only files directly in the source dir.",
-    )
+    base = build_ingest_parser(PROG)
 
     if wants_help:
         return _dispatch_help(argv)

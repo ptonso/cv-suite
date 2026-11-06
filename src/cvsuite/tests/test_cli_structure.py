@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import argparse
+import importlib
+
 import pytest
 
-from cvsuite.branch_cli import discover_commands
+from cvsuite.branch_cli import build_generic_parser, build_parser, discover_commands
 from cvsuite import cli
 from cvsuite.common.core import VisionDataset
 from cvsuite.classify import cli as classify_cli
+from cvsuite.eda import cli as eda_cli
 from cvsuite.gen import cli as gen_cli
 from cvsuite.label import cli as label_cli
 from cvsuite.vlm import cli as vlm_cli
@@ -119,7 +123,7 @@ def test_class_branch_help_uses_pipeline_usage(capsys) -> None:
     out = capsys.readouterr().out
     assert "usage: cvsuite class <src> [ingest opts] [<transform> <transform args>]... <command> [args]" in out
     assert "--from {auto,images,unstructured,multi-class}" in out
-    assert "formats: auto, images, unstructured, multi-class" in out
+    assert "ingest options:" in out
     assert "to-class-dir" in out
     assert "infer" in out
     assert "sample" in out
@@ -262,3 +266,96 @@ def test_docs_tree_exists() -> None:
         assert (specs / name).exists()
     for branch in ["label", "classify", "prep", "vlm", "gen", "common"]:
         assert (specs / branch).is_dir()
+
+
+PIPELINE_BRANCHES = {
+    "label": (label_cli, label_cli.transform_module, label_cli._resolve_command_module),
+    "class": (classify_cli, classify_cli._transform_module, classify_cli._output_module),
+    "vlm": (vlm_cli, vlm_cli._transform_module, vlm_cli._output_module),
+    "eda": (eda_cli, label_cli.transform_module, eda_cli._resolve_command_module),
+}
+
+
+def test_top_level_help_describes_every_branch(capsys) -> None:
+    assert cli.main(["--help"]) == 0
+    out = capsys.readouterr().out
+    for branch in cli._discover_branches():
+        assert f"  {branch} " in out
+    assert "cvsuite <branch> --help" in out
+    assert "examples:" in out
+
+
+@pytest.mark.parametrize("branch", PIPELINE_BRANCHES)
+def test_pipeline_branch_help_lists_every_command_with_ingest_and_examples(capsys, branch) -> None:
+    module, _, _ = PIPELINE_BRANCHES[branch]
+    assert module.main(["--help"]) == 0
+    out = capsys.readouterr().out
+    for name in [*module.TRANSFORM_COMMANDS, *module.COMMANDS]:
+        assert f"  {name} " in out
+    assert "--from" in out
+    assert "examples:" in out
+    assert f"cvsuite {branch} <src> <command> --help" in out
+
+
+def test_gen_branch_help_lists_actions_with_examples(capsys) -> None:
+    assert gen_cli.main(["--help"]) == 0
+    out = capsys.readouterr().out
+    for name in [*gen_cli.ACTION_COMMANDS, *gen_cli.OUTPUT_COMMANDS]:
+        assert f"  {name} " in out
+    assert "examples:" in out
+
+
+def test_model_backed_transforms_are_tagged_in_branch_help(capsys) -> None:
+    assert label_cli.main(["--help"]) == 0
+    out = capsys.readouterr().out
+    assert any(line.startswith("  ground") and line.endswith("[model]") for line in out.splitlines())
+    assert "downloads its weights" in out
+
+
+def test_namespace_help_routes_to_the_subcommand(capsys) -> None:
+    assert label_cli.main([".", "ops", "rebox", "--help"]) == 0
+    assert "cvsuite label ops rebox" in capsys.readouterr().out
+    assert label_cli.main([".", "filter", "apply", "--help"]) == 0
+    assert "cvsuite label filter apply" in capsys.readouterr().out
+
+
+def _command_parsers() -> list[tuple[str, argparse.ArgumentParser]]:
+    found = []
+    for branch, (module, transform, output) in PIPELINE_BRANCHES.items():
+        for name in module.TRANSFORM_COMMANDS:
+            found.append((f"{branch} {name}", build_parser(transform(name), prog=name)))
+        for name in module.COMMANDS:
+            found.append((f"{branch} {name}", build_parser(output(name), prog=name)))
+    for name in gen_cli.ACTION_COMMANDS:
+        found.append((f"gen {name}", build_parser(gen_cli._action_module(name), prog=name)))
+    for name in gen_cli.OUTPUT_COMMANDS:
+        found.append((f"gen {name}", build_parser(gen_cli._output_module(name), prog=name)))
+    for package in ("cvsuite.common", "cvsuite.prep"):
+        for spec in discover_commands(package):
+            module = importlib.import_module(spec.import_path)
+            if hasattr(module, "attach"):
+                found.append((f"{package} {spec.cli_name}", build_parser(module, prog=spec.cli_name)))
+    return found
+
+
+def _undocumented(parser: argparse.ArgumentParser) -> list[str]:
+    missing = []
+    for action in parser._actions:
+        if isinstance(action, argparse._HelpAction):
+            continue
+        if isinstance(action, argparse._SubParsersAction):
+            missing += [flag for sub in action.choices.values() for flag in _undocumented(sub)]
+        elif not action.help:
+            missing.append(action.dest)
+    return missing
+
+
+def test_every_command_documents_every_parameter() -> None:
+    parsers = _command_parsers()
+    assert len(parsers) > 40
+    undocumented = {name: missing for name, parser in parsers if (missing := _undocumented(parser))}
+    assert undocumented == {}
+
+
+def test_every_command_has_a_description() -> None:
+    assert [name for name, parser in _command_parsers() if not parser.description] == []

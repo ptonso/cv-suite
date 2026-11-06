@@ -1,4 +1,4 @@
-"""Eda branch: ingest like `label`, apply transforms, and write an exploratory report."""
+"""Dataset exploration: ingest like `label`, narrow or split the data, and write figures and tables into a report folder."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import sys
 from functools import partial
 from pathlib import Path
 
-from ..branch_cli import build_parser, parse_help, result_to_exit_code, run_chain, split_rest
+from ..branch_cli import build_parser, help_target, parse_help, print_branch_help, result_to_exit_code, run_chain, split_rest
 from ..common.io.common import remove_dirs
 from ..label import cli as label_cli
 from ..label.core import router
@@ -17,7 +17,6 @@ from .core import style
 
 OUTPUT_PKG = f"{__package__}.output.commands"
 PROG = "cvsuite eda"
-INGEST_FORMATS = ["auto", "yolo", "labelme", "coco", "images", "class-dir", "semseg-mask"]
 
 
 def _iter_output_commands() -> dict[str, str]:
@@ -36,10 +35,28 @@ TRANSFORM_COMMANDS = {name: target for name, target in label_cli.TRANSFORM_COMMA
 MODEL_BACKED = sorted(set(label_cli.TRANSFORM_COMMANDS) - set(TRANSFORM_COMMANDS))
 
 
+USAGE = f"usage: {PROG} <src> [<src> ...] [ingest opts] [<transform> <transform args>]... to-report <out> [options]"
+EXAMPLES = [
+    "cvsuite eda ./dataset to-report ./report",
+    "cvsuite eda ./visa select --drop-class Background --empty drop split --group-by dir:0 --val-frac 0.15 --test-frac 0.15 to-report ./report --group-by dir:0",
+]
+SUMMARY = (
+    "Reads a dataset like `label` does, optionally narrows or splits it with the transforms below, and writes\n"
+    "figures and tables per section into a report folder. The analysis never changes its source and runs no\n"
+    "models: write labels with `cvsuite label` first. Needs `pip install \"cv-suite[eda]\"`."
+)
+
+
 def _print_usage() -> None:
-    print(f"usage: {PROG} <src> [<src> ...] [ingest opts] [<transform> <transform args>]... to-report <out> [options]")
-    print(f"output commands: {', '.join(sorted(COMMANDS))}")
-    print(f"transforms: {', '.join(sorted(TRANSFORM_COMMANDS))}")
+    print_branch_help(
+        USAGE,
+        SUMMARY,
+        ingest=label_cli.build_ingest_parser(PROG),
+        transforms={name: partial(label_cli.transform_module, name) for name in TRANSFORM_COMMANDS},
+        commands={name: partial(_resolve_command_module, name) for name in COMMANDS},
+        examples=EXAMPLES,
+        hint=f"flags of one command: {PROG} <src> <command> --help (any path works as <src>)",
+    )
 
 
 def _resolve_command_module(name: str):
@@ -58,16 +75,13 @@ def _split_sources_and_rest(argv: list[str]) -> tuple[list[str], list[str]]:
 
 
 def _dispatch_help(argv: list[str]) -> int:
-    help_pos = next(i for i, t in enumerate(argv) if t in {"-h", "--help"})
-    before = [t for t in argv[:help_pos] if t in COMMANDS or t in TRANSFORM_COMMANDS]
-    known = [t for t in argv if t in COMMANDS or t in TRANSFORM_COMMANDS]
-    target = before[-1] if before else (known[0] if known else None)
-    if target in TRANSFORM_COMMANDS:
-        return parse_help(build_parser(label_cli.transform_module(target), prog=f"{PROG} {target}"), ["-h"])
-    if target in COMMANDS:
-        return parse_help(build_parser(_resolve_command_module(target), prog=f"{PROG} {target}"), ["-h"])
-    _print_usage()
-    return 0
+    target = help_target(argv, [*COMMANDS, *TRANSFORM_COMMANDS])
+    if target is None:
+        _print_usage()
+        return 0
+    name, sub = target
+    module = label_cli.transform_module(name) if name in TRANSFORM_COMMANDS else _resolve_command_module(name)
+    return parse_help(build_parser(module, prog=f"{PROG} {name}"), [*sub, "-h"])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -75,11 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     if any(token in {"-h", "--help"} for token in argv):
         return _dispatch_help(argv)
 
-    base = argparse.ArgumentParser(add_help=False, prog=PROG, allow_abbrev=False)
-    base.add_argument("--from", dest="from_fmt", choices=INGEST_FORMATS, default="auto")
-    base.add_argument("--keypoints-file", type=Path)
-    base.add_argument("--max-depth", dest="max_depth", type=int, default=-1)
-    base.add_argument("--images-dir", dest="images_dir", type=Path, action="append", default=[])
+    base = label_cli.build_ingest_parser(PROG)
     parsed, remaining = base.parse_known_args(argv)
     sources, rest = _split_sources_and_rest(remaining)
     if not sources:

@@ -1,4 +1,4 @@
-"""VLM branch: ingest datasets, optionally run a VLM transform, then materialize a new dataset format."""
+"""Vision-language data: caption images or answer questions about them with VLMs, then write JSON, shards or VQA-style manifests."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import sys
 from functools import partial
 from pathlib import Path
 
-from ..branch_cli import build_parser, parse_help, result_to_exit_code, run_chain, split_rest
+from ..branch_cli import MODEL_NOTE, build_parser, help_target, parse_help, print_branch_help, result_to_exit_code, run_chain, split_rest
 from ..common.io.common import remove_dirs
 from .core import router
 
@@ -42,14 +42,46 @@ COMMANDS = _iter_output_commands()
 TRANSFORM_COMMANDS = _iter_transform_commands()
 
 
+USAGE = f"usage: {PROG} <src> [ingest opts] [<transform>] <command> [args]"
+EXAMPLES = [
+    "cvsuite vlm ./images caption --provider qwen to-json ./captions",
+    'cvsuite vlm ./images/dog.jpg ask --prompt "How many dogs are in this image?" --provider qwen to-json ./answers',
+    "cvsuite vlm --provider qwen -h",
+]
+SUMMARY = (
+    "Reads an image folder or a vision-language dataset, runs at most one VLM transform, and writes the result\n"
+    "with exactly one output command. Without a transform it converts between the formats. An output refuses a\n"
+    "destination that already holds files unless --overwrite."
+)
+
+
+def build_ingest_parser() -> argparse.ArgumentParser:
+    base = argparse.ArgumentParser(add_help=False, prog=PROG, allow_abbrev=False, usage=argparse.SUPPRESS)
+    base.add_argument("src", nargs="?", help="Source image, folder or dataset.")
+    group = base.add_argument_group("ingest options")
+    group.add_argument(
+        "--from",
+        dest="from_fmt",
+        choices=["auto", "images", "json", "shards", "vqa-style"],
+        default="auto",
+        help="Source format (default auto). images: image-only folder; json: flat folder of image + JSON pairs; "
+        "shards: TAR shards of image + JSON pairs; vqa-style: normalized VQA manifest.",
+    )
+    return base
+
+
 def _print_usage() -> None:
-    commands = ", ".join(sorted(COMMANDS))
-    transforms = ", ".join(sorted(TRANSFORM_COMMANDS)) or "none"
-    print(f"usage: {PROG} <src> [ingest opts] [<transform>] <command> [args]")
-    print(f"formats: auto, images, json, shards, vqa-style")
-    print(f"output commands: {commands}")
-    print(f"transforms: {transforms}")
-    print(f"provider help: {PROG} --provider <provider> -h")
+    print_branch_help(
+        USAGE,
+        SUMMARY,
+        ingest=build_ingest_parser(),
+        transforms={name: partial(_transform_module, name) for name in TRANSFORM_COMMANDS},
+        commands={name: partial(_output_module, name) for name in COMMANDS},
+        examples=EXAMPLES,
+        notes=[MODEL_NOTE],
+        hint=f"flags of one command: {PROG} <src> <command> --help (any path works as <src>)\n"
+        f"provider catalog (models, checkpoints, precision): {PROG} --provider <provider> -h",
+    )
 
 
 def _print_model_help(provider_name: str) -> None:
@@ -82,6 +114,10 @@ def _transform_module(name: str):
     return importlib.import_module(f"{TRANSFORMS_PKG}.{TRANSFORM_COMMANDS[name]}")
 
 
+def _output_module(name: str):
+    return importlib.import_module(f"{OUTPUT_PKG}.{COMMANDS[name]}")
+
+
 def _transform_help(name: str, argv: list[str]) -> int:
     module = importlib.import_module(f"{TRANSFORMS_PKG}.{TRANSFORM_COMMANDS[name]}")
     parser = build_parser(module, prog=f"{PROG} {name}")
@@ -103,17 +139,14 @@ def _dispatch_help(argv: list[str]) -> int:
         _print_model_help(selected_model)
         return 0
 
-    help_pos = next(i for i, t in enumerate(argv) if t in {"-h", "--help"})
-    before = [t for t in argv[:help_pos] if t in COMMANDS or t in TRANSFORM_COMMANDS]
-    known = [t for t in argv if t in COMMANDS or t in TRANSFORM_COMMANDS]
-    target = before[-1] if before else (known[0] if known else None)
-    if target in TRANSFORM_COMMANDS:
-        return _transform_help(target, argv)
-    if target in COMMANDS:
-        module = importlib.import_module(f"{OUTPUT_PKG}.{COMMANDS[target]}")
-        return parse_help(build_parser(module, prog=f"{PROG} {target}"), ["-h"])
-    _print_usage()
-    return 0
+    target = help_target(argv, [*COMMANDS, *TRANSFORM_COMMANDS])
+    if target is None:
+        _print_usage()
+        return 0
+    name, sub = target
+    if name in TRANSFORM_COMMANDS:
+        return _transform_help(name, argv)
+    return parse_help(build_parser(_output_module(name), prog=f"{PROG} {name}"), [*sub, "-h"])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -121,9 +154,7 @@ def main(argv: list[str] | None = None) -> int:
     if any(token in {"-h", "--help"} for token in argv):
         return _dispatch_help(argv)
 
-    base = argparse.ArgumentParser(add_help=False, prog=PROG, allow_abbrev=False)
-    base.add_argument("src", nargs="?")
-    base.add_argument("--from", dest="from_fmt", choices=["auto", "images", "json", "shards", "vqa-style"], default="auto")
+    base = build_ingest_parser()
 
     parsed, rest = base.parse_known_args(argv)
     if not parsed.src:

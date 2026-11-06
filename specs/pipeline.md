@@ -46,6 +46,8 @@ A transform that creates temporary files appends their folders to `dataset.meta[
 
 - `build_parser(module, prog)`: builds an `ArgumentParser` from a command module's `attach()` and docstring.
 - `parse_help(parser, argv)`: triggers the parser's help path and returns `0`; re-raises non-help exits.
+- `help_target(argv, names)`: the command that `--help` asks about and the subcommand token after it, if any.
+- `print_branch_help(usage, summary, ...)`: prints the help of a branch ([Help](#help)).
 - `split_rest(rest, transforms, commands, *, prog="cvsuite", max_transforms=None)`: `transforms` maps a name to a callable returning its module, so only the named modules are imported. Returns the transform steps as `Step(name, args, module)` tuples, the output command name and its raw arguments, or `(steps, None, [])` when no output command is present. It enforces the chain rules above and `max_transforms`.
 - `run_chain(dataset, steps, *, cleanup)`: runs the transforms in order, records the steps, and collects every folder listed in `cleanup_dirs` into the `cleanup` list. The branch removes that list in a `finally` (`remove_dirs`).
 
@@ -68,7 +70,9 @@ Every output that places source images in its destination takes `--link-mode {co
 
 ### Help
 
-`--help` is dispatched from the raw argument list to the most specific parser named before it, even when a source path comes first. `cvsuite label ./ds to-coco --help` prints the `to-coco` help. A `--provider <p> -h` form on `vlm` appends that provider's catalog ([vlm cli](vlm/cli.md)).
+`--help` is dispatched from the raw argument list to the most specific parser named before it, even when a source path comes first. `cvsuite label ./ds to-coco --help` prints the `to-coco` help. A command that is a namespace takes its subcommand between its name and `--help`: `cvsuite label ./ds ops rebox --help` prints the `rebox` help. A `--provider <p> -h` form on `vlm` appends that provider's catalog ([vlm cli](vlm/cli.md)).
+
+`cvsuite <branch> --help` (and an error that needs the usage) prints, in order: the usage line, a summary of how a run behaves, the ingest options with their help text, one line per transform and per output command, the notes of the branch, how to reach the flags of one command, and examples. A command's line is the first line of its module docstring, tagged `[model]` when the module sets `FM = True`. A branch passes its examples as data; a command added under a registry directory appears in the listing without further code.
 
 ### Exit codes
 
@@ -85,6 +89,7 @@ Every output that places source images in its destination takes `--link-mode {co
 - A missing output command MUST print usage and exit with a message. An unrecognized token MUST be named in the message.
 - A missing source MUST return exit code `1`.
 - `--help` MUST stay offline.
+- The branch help MUST list every registered transform and output command with its docstring line, and MUST show the ingest options the branch parses.
 - Temporary folders created by a transform MUST be removed after the output command ran, including when it failed.
 - `dataset.meta["steps"]` MUST hold one entry per transform, in the order they ran.
 - A link mode MUST NOT fall back to another mode. `--link-mode sym` MUST raise for an image under a cleanup folder.

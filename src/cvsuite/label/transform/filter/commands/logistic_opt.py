@@ -74,8 +74,8 @@ def attach(p: argparse.ArgumentParser) -> None:
         help="Output YAML with learned gates.",
     )
     p.add_argument("--match-iou", type=float, default=0.5, help="IoU for GT matching during optimization.")
-    p.add_argument("--epochs", type=int, default=500)
-    p.add_argument("--lr", type=float, default=0.05)
+    p.add_argument("--epochs", type=int, default=500, help="Optimizer epochs per logistic fit.")
+    p.add_argument("--lr", type=float, default=0.05, help="Learning rate of the logistic fit.")
     p.add_argument("--l2", type=float, default=1e-3, help="L2 regularization strength for logistic fitting.")
     p.add_argument("--alpha", type=float, default=0.05, help="Wald p-value cutoff for pruning.")
     p.add_argument("--max-prune-iters", type=int, default=25, help="Max prune iterations for feature selection.")
@@ -86,8 +86,8 @@ def attach(p: argparse.ArgumentParser) -> None:
         default="score,box_area_frac",
         help="Comma-separated feature names to never prune during optimization.",
     )
-    p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--device", type=str, default="cpu")
+    p.add_argument("--seed", type=int, default=42, help="Seed of the validation split and the fit.")
+    p.add_argument("--device", type=str, default="cpu", help="Torch device for the logistic fit (cpu, cuda).")
     p.add_argument("--beta", type=float, default=2.0, help="F-beta to maximize when choosing threshold.")
     p.add_argument(
         "--conf-metric",
@@ -103,9 +103,19 @@ def attach(p: argparse.ArgumentParser) -> None:
         help="Fraction of overlapping samples held out for validation (0 disables validation).",
     )
     p.add_argument("--tune-nms-iou", action="store_true", help="Grid-search global.nms_iou for best micro F-beta.")
-    p.add_argument("--nms-grid", type=str, default="0.20,0.25,0.30,0.35,0.40,0.45,0.50,0.55,0.60,0.65,0.70")
+    p.add_argument(
+        "--nms-grid",
+        type=str,
+        default="0.20,0.25,0.30,0.35,0.40,0.45,0.50,0.55,0.60,0.65,0.70",
+        help="Comma-separated IoU values searched by --tune-nms-iou.",
+    )
     p.add_argument("--tune-cross-class-iou", action="store_true", help="Grid-search global.cross_class_iou for best micro F-beta.")
-    p.add_argument("--cross-grid", type=str, default="0.10,0.20,0.25,0.30,0.35,0.40,0.45,0.50,0.55")
+    p.add_argument(
+        "--cross-grid",
+        type=str,
+        default="0.10,0.20,0.25,0.30,0.35,0.40,0.45,0.50,0.55",
+        help="Comma-separated IoU values searched by --tune-cross-class-iou.",
+    )
     p.add_argument("--with-rgb", action="store_true", help="Load images to enable color-based features.")
     p.add_argument(
         "--log-dir",

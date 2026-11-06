@@ -81,7 +81,7 @@ cvsuite <branch> [args]      # runs <branch>'s main()
 - Public branches are the child packages of `src/cvsuite/` that contain a `cli.py`, found by scanning the filesystem. Nested packages are never public.
 - Public names come from package names: `classify` is aliased to `class`; other underscores become hyphens. The requested token is normalized the same way, then mapped back to the package and imported as `cvsuite.<package>.cli`.
 - An unknown branch prints usage, then raises `SystemExit("Unknown branch: ...")`.
-- Top-level help only scans the filesystem; it does not import branch modules.
+- Top-level help only scans the filesystem and reads the first docstring line of each branch's `cli.py` as that branch's summary; it does not import branch modules. It prints the command shape, one line per branch, how the help levels nest and a few examples.
 
 ### Command discovery below the top level
 
@@ -90,7 +90,7 @@ cvsuite <branch> [args]      # runs <branch>'s main()
 
 ### Help
 
-Branch help is offline and deterministic. Provider and model catalogs shown in `--help` come from source metadata read through the provider registry, never from live lookups ([fm_provider](common/fm_provider.md)).
+Help has three levels, from general to specific: `cvsuite --help` (the branches), `cvsuite <branch> --help` (the commands of one branch) and `cvsuite <branch> <src> <command> --help` (the flags of one command). Each level names the next. Help is offline and deterministic. Provider and model catalogs shown in `--help` come from source metadata read through the provider registry, never from live lookups ([fm_provider](common/fm_provider.md)).
 
 ## Constraints
 
@@ -100,6 +100,7 @@ Branch help is offline and deterministic. Provider and model catalogs shown in `
 - `common` MUST NOT choose folder layouts or dataset schemas. The model layer MUST NOT decide output layout or source detection.
 - A transform that several branches share MUST keep its logic in `cvsuite.common` and MUST be exposed by a thin command module in each branch that offers it. Branches MUST NOT keep competing copies of it.
 - Top-level help MUST NOT import every branch.
+- Every command module MUST have a docstring, because its first line is the command's summary in the branch help, and every parameter of every command MUST have help text (`src/cvsuite/tests/test_cli_structure.py`).
 - Guardrails belong to the spec that owns the command: for example [`class sample`](classify/transforms.md#sample), [`prep sample`](prep/transforms.md#sample), [`split`](common/split.md#constraints), [`--link-mode`](pipeline.md#link-mode), [`sam3` on CPU](label/transforms.md#ground), and [`--max-gpu-memory`](vlm/transforms.md#constraints).
 
 ## History
