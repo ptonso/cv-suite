@@ -1,12 +1,21 @@
 # cvsuite
 
+[![PyPI](https://img.shields.io/pypi/v/cv-suite.svg)](https://pypi.org/project/cv-suite/ "PyPI release")
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT "License: MIT")
+
 `cvsuite` is a computer vision toolkit for reproducible, filesystem-to-filesystem dataset work, organized around one CLI:
 
 ```bash
 cvsuite <branch> <src> [transform] <output>
 ```
 
-Convert between annotation formats (YOLO, COCO, LabelMe, class folders, segmentation masks, VQA manifests). Auto-label raw images from a text prompt with foundation grounding models such as SAM 3 or Grounding DINO. Caption them or answer questions about them with vision-language models. Sort them into class folders with zero-shot classifiers. Read text off them with OCR. Generate and edit images with diffusion models. Then do the unglamorous half of the job: unzip and flatten a dump of files, drop exact and near-duplicates, fix orientation, normalize size and format, and draw a balanced sample for training.
+- Convert between multiple annotation formats (YOLO, COCO, LabelMe, class folders, segmentation masks, VQA manifests). 
+- Auto-label raw images from a text prompt with foundation grounding models (fm) such as SAM 3 or Grounding DINO. 
+- Collect caption from images or answer questions about them with vision-language models. 
+- Sort files into class folders with zero-shot classifiers. 
+- Read text off with OCR. 
+- Generate and edit images with diffusion models. 
+- Then do the unglamorous half of the job: unzip and flatten a dump of files, drop exact and near-duplicates, fix orientation, normalize size and format, and draw a balanced sample for training.
 
 ```bash
 cvsuite label ./dataset-yolo to-coco ./dataset-coco
@@ -69,14 +78,14 @@ You point a branch at a source, optionally run a transform, and materialize a de
 
 ```mermaid
 flowchart LR
-    SRC["source<br/>yolo · coco · labelme<br/>images · shards · …"] --> TOOL
+    SRC["<u>source</u><br>yolo · coco · labelme<br>images · shards · …"] --> TOOL
 
-    TOOL{"pick a tool<br/>label · class · vlm · gen"} -->|ingest| DS["VisionDataset"]
+    TOOL{"<u>pick a tool</u><br>label · class · vlm · gen"} -->|ingest| DS["VisionDataset"]
 
-    DS --> TF["one transform<br/>sample · ground · ocr<br/>infer · caption · vqa"]
-    TF -->|"chain runs to stack"| DS
+    DS --> TF["<u>transforms, in order</u><br>sample · split · select · ground<br>ocr · infer · caption · vqa"]
+    TF -->|"next transform"| TF
 
-    DS -->|output command| DST["destination<br/>yolo · coco · class-dir<br/>json · shards · …"]
+    DS -->|output command| DST["<u>destination</u><br>yolo · coco · class-dir<br/>json · shards · …"]
 ```
 
 Whichever tool you pick, the spine is the same: the source is ingested into a shared `VisionDataset`, transforms mutate that dataset, and an output command materializes it. What differs per tool is the ingest heuristics, which transforms exist, and the export rules.
@@ -91,8 +100,8 @@ A run applies any number of transforms, left to right, before the output command
 | `cvsuite class` | class-directory datasets: `infer` with zero-shot classifiers, class-aware `sample`, export via `to-class-dir` |
 | `cvsuite vlm` | vision-language datasets: `caption` / `ask` / `vqa` / `map-answers`, export to flat JSON / shards / VQA-style |
 | `cvsuite gen` | text-to-image and image-edit generation, materialized via `to-dst` |
-| `cvsuite eda` | explore a dataset: image table, class and box statistics, health checks, near-duplicate twins across splits and metadata shortcuts as figures in a report folder (`pip install "cv-suite[eda]"`) |
 | `cvsuite prep` | raw image folder cleanup: `arrange` / `process` / `sample` / `orient`, file-first |
+| `cvsuite eda` | explore a dataset: image table, class and box statistics, health checks, near-duplicate twins across splits and metadata shortcuts as figures in a report folder (`pip install "cv-suite[eda]"`) |
 | `cvsuite common` | shared operations: FM cache paths, inspection, and purge |
 
 ## Install

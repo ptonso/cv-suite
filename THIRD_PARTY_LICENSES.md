@@ -6,7 +6,7 @@ covers the adapter code in `src/cvsuite/common/fm/providers/` — it does
 
 Each provider under `common/fm/providers/setup_venv/*.sh` is optional: it
 installs a separate model (code + weights) into its own isolated venv only
-when you run `cvsuite setup <provider>`. cv-suite never vendors or
+when you first use that provider. cv-suite never vendors or
 redistributes that code — but by installing it you agree to *its* license,
 not cv-suite's. This file tracks those terms per provider.
 
@@ -62,7 +62,7 @@ Hugging Face model card before commercial or redistributed use.
 
 - Using cv-suite's core (dataset prep, labeling, CLI) carries only the MIT
   license.
-- Running `cvsuite setup <provider>` pulls in that provider's own code and
+- Using a provider for the first time pulls in that provider's own code and
   weights under its own terms — cv-suite does not, and cannot, relicense
   them.
 - If you ship a product that calls `yolo_e`, `stable_diffusion`, `flux`,
