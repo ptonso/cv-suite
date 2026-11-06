@@ -54,6 +54,7 @@ cvsuite = "cvsuite.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["cvsuite*"]
+exclude = ["cvsuite*.tests"]
 
 [tool.setuptools.package-data]
 cvsuite = ["common/fm/providers/setup_venv/*.sh"]
