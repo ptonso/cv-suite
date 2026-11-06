@@ -5,6 +5,7 @@ import json
 import re
 from dataclasses import dataclass
 from functools import lru_cache
+from importlib.metadata import version
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -194,7 +195,7 @@ def _fetch_hf_model_ids(spec: ModelCatalogSpec) -> tuple[str, ...]:
         _catalog_url(spec),
         headers={
             "Accept": "application/json",
-            "User-Agent": "cvsuite/0.0.1",
+            "User-Agent": f"cvsuite/{version('cv-suite')}",
         },
     )
     with urlopen(request, timeout=HF_TIMEOUT_SECS) as response:
