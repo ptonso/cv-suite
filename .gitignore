@@ -16,6 +16,7 @@ log/*
 src/log/*
 
 specs/delta/
+specs/logs/
 
 dist/
 build/
