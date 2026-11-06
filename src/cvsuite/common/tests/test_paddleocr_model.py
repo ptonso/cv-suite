@@ -21,8 +21,7 @@ def _write_image(path: Path) -> None:
 
 
 class _FakeEngine:
-    def ocr(self, image_path: str, cls: bool = True):
-        assert cls is True
+    def predict(self, image_path: str):
         return [
             [
                 [
