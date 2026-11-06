@@ -27,7 +27,7 @@ The analysis never changes its source. It reads the dataset like the `label` bra
 
 Usage: `cvsuite eda <src> [<src> ...] [ingest opts] [<transform> <transform args>]... to-report <out> [options]`.
 
-Ingest options are the `label` branch's: `--from {auto,yolo,labelme,coco,images,class-dir,semseg-mask}`, `--keypoints-file`, `--max-depth`. Class-folder datasets need `--from class-dir`.
+Ingest options are the `label` branch's: `--from {auto,yolo,labelme,coco,images,class-dir,semseg-mask}`, `--keypoints-file`, `--max-depth`, `--images-dir`. Class-folder datasets need `--from class-dir`.
 
 Transforms: the `label` registry without model-backed transforms, so `select`, `remap-classes`, `split`, `sample`, `filter` and `ops`. Chaining follows [pipeline](../pipeline.md#chaining).
 
@@ -42,7 +42,7 @@ to-report <out> [--group-by KEY]... [--top N] [--only SECTION[,SECTION...]]
 - `--group-by` takes [key specs](../common/keys.md) and has the meaning it has in `split`: records that belong together. Each section adds per-group panels for the `--top` largest groups, the leak section also reports accuracy within each group, and the split section reports groups that straddle splits.
 - `--top N` (default 20) caps every per-class and per-group view. The remainder is drawn as one `other (k)` entry. Tables always list every class and group.
 - `--only` runs the listed sections. By default every section that applies runs.
-- `--measure` and `--twin-threshold` set the similarity for the split section: `hash` with a threshold in bits (default 6 of 64) or `ssim` with an index (default 0.6) ([similarity](../common/similarity.md)). With `ssim`, the best score is taken over the 25 nearest train images by hash distance, so SSIM refines the hash candidates and does not scan every pair.
+- `--measure` and `--twin-threshold` set the similarity for the split section: `hash` with a threshold in bits (default 6 of 64, whole bits) or `ssim` with an index (default 0.6) ([similarity](../common/similarity.md)). With `ssim`, the best score is taken over the 25 nearest train images by hash distance, so SSIM refines the hash candidates and does not scan every pair.
 - `--max-images N` (default 20000) bounds the quadratic work. When a section would compare more records than N, it samples N of them with [nested sampling](../common/sampling.md) and the report says so.
 - `--seed` (default 0) seeds sampling and the leak baselines.
 - A report folder that is not empty raises unless `--overwrite`, which replaces only the section folders and files the run writes ([output claims](../common/io.md#output-claims)).
@@ -74,3 +74,4 @@ A dataset with folds ([split](../common/split.md#representation)) MUST have exac
 - [What belongs in cvsuite](../logs/2026-11-05_what-belongs-in-cvsuite.md): why exploratory analysis passed the test for joining the tool.
 - [The eda branch](../logs/2026-11-05_eda-branch.md): why a branch, why sections are folders, and how it scales to 1000 classes.
 - [Chained transforms and split as a transform](../logs/2026-11-05_chained-transforms-and-split.md): why a report can follow transforms.
+- [Gaps found by migrating the projects](../logs/2026-11-06_migration-gaps.md): why COCO takes `--images-dir`.

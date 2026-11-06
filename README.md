@@ -91,6 +91,7 @@ A run applies any number of transforms, left to right, before the output command
 | `cvsuite class` | class-directory datasets: `infer` with zero-shot classifiers, class-aware `sample`, export via `to-class-dir` |
 | `cvsuite vlm` | vision-language datasets: `caption` / `ask` / `vqa` / `map-answers`, export to flat JSON / shards / VQA-style |
 | `cvsuite gen` | text-to-image and image-edit generation, materialized via `to-dst` |
+| `cvsuite eda` | explore a dataset: image table, class and box statistics, health checks, near-duplicate twins across splits and metadata shortcuts as figures in a report folder (`pip install "cv-suite[eda]"`) |
 | `cvsuite prep` | raw image folder cleanup: `arrange` / `process` / `sample` / `orient`, file-first |
 | `cvsuite common` | shared operations: FM cache paths, inspection, and purge |
 

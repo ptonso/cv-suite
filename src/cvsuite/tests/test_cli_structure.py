@@ -19,7 +19,7 @@ def _stage(name: str) -> VisionDataset:
 
 def test_cli_discovers_expected_branches() -> None:
     branches = cli._discover_branches()
-    assert set(branches) >= {"class", "common", "gen", "label", "prep", "vlm"}
+    assert set(branches) >= {"class", "common", "eda", "gen", "label", "prep", "vlm"}
     assert "classify" not in set(branches)
     assert "ocr" not in set(branches)
 

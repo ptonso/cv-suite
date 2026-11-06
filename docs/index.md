@@ -4,6 +4,7 @@ These pages are the friendly introduction. For exact behavior and the contracts 
 
 - [Getting started](getting-started.md) — install, run your first command, understand FM backends.
 - [Cookbook](cookbook.md) — copy-paste recipes for the common workflows.
+- [Explore a dataset](eda.md) — the `eda` branch: figures and tables before you train.
 
 ## The mental model
 
@@ -13,7 +14,7 @@ cvsuite does one shape of work: **take a source on disk, optionally run transfor
 cvsuite <branch> <src> [<transform> <transform args>]... <output-command> [output args]
 ```
 
-- `<branch>` picks the domain: `label`, `class`, `vlm`, `gen`, `prep`, `common`.
+- `<branch>` picks the domain: `label`, `class`, `vlm`, `gen`, `eda`, `prep`, `common`.
 - `<src>` is a file or folder. The branch detects its format unless you pass `--from`.
 - `<transform>` is optional and repeatable. Transforms run left to right on the dataset in memory. A model-backed one (`ground`, `ocr`, `infer`) comes first and appears once; `vlm` takes one transform.
 - `<output-command>` is required. It writes the result. Output commands are spelled `to-<something>` (`to-coco`, `to-class-dir`, `to-json`, `to-dst`, …).
